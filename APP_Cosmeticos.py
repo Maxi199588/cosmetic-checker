@@ -334,12 +334,12 @@ def buscar_cas_en_restricciones(cas_list, mostrar_info=False):
                 st.write("Buscando específicamente en Annex II, columna 'CAS Number'...")
             
             if 'CAS Number' in annex_ii.columns:
-                # Búsqueda directa
-                matches = annex_ii[annex_ii['CAS Number'].astype(str) == cas_number]
+                # Búsqueda por contenido en lugar de coincidencia exacta
+                matches = annex_ii[annex_ii['CAS Number'].astype(str).str.contains(cas_number, case=False, na=False)]
                 
                 if not matches.empty:
                     if mostrar_info:
-                        st.success(f"✅ ENCONTRADO en Annex II por búsqueda directa")
+                        st.success(f"✅ ENCONTRADO en Annex II por búsqueda de contenido")
                         st.dataframe(matches)
                     
                     resultados[cas_number]["encontrado"] = True
@@ -357,7 +357,7 @@ def buscar_cas_en_restricciones(cas_list, mostrar_info=False):
                 for idx, row in annex_ii.iterrows():
                     try:
                         cas_valor = str(row['CAS Number']).strip()
-                        if cas_valor == cas_number or cas_valor == "51843" or '51-84-3' in cas_valor:
+                        if cas_number in cas_valor or cas_valor == "51843" or '51-84-3' in cas_valor:
                             if mostrar_info:
                                 st.success(f"✅ ENCONTRADO en Annex II, fila {idx}")
                                 st.dataframe(annex_ii.loc[[idx]])
@@ -395,8 +395,8 @@ def buscar_cas_en_restricciones(cas_list, mostrar_info=False):
                 if mostrar_info:
                     st.write(f"Buscando en {nombre_annex}, columna '{cas_column}'...")
                 
-                # Búsqueda exacta
-                matches = df_annex[df_annex[cas_column].astype(str) == cas_number]
+                # Cambio clave: Búsqueda por contenido en lugar de coincidencia exacta
+                matches = df_annex[df_annex[cas_column].astype(str).str.contains(cas_number, case=False, na=False)]
                 if not matches.empty:
                     if mostrar_info:
                         st.success(f"✅ ENCONTRADO en {nombre_annex}, columna '{cas_column}'")
