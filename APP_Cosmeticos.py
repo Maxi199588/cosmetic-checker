@@ -631,41 +631,47 @@ elif modo_busqueda == "Búsqueda por fórmula de ingredientes":
             exact_search = True if tipo_busqueda == "Exacta" else False
             df_resultado_formula = buscar_ingredientes_por_nombre(ingredientes, exact=exact_search)
             if not df_resultado_formula.empty:
+                st.write("Resultados obtenidos:")
                 st.dataframe(df_resultado_formula)
-                
-                # NUEVO BLOQUE: Selección de filas y copiado de números de CAS
-                cas_column_candidates = ["CAS", "CAS No", "CAS_number"]  # <-- Ajusta según nombres que pueda tener tu columna
+
+                # BLOQUE NUEVO: Agregar checkboxes en la tabla usando st.data_editor para seleccionar filas
+                cas_column_candidates = ["CAS", "CAS No", "CAS_number"]  # Ajusta según nombres posibles de la columna
                 cas_column = None
-                
                 for col in cas_column_candidates:
                     if col in df_resultado_formula.columns:
                         cas_column = col
                         break
-                
+
                 if cas_column:
-                    # Creamos opciones para seleccionar, mostrando información relevante de cada fila
-                    opciones = [
-                        f"Fila {i}: {row.get('Ingredient', row.get('Name', 'Desconocido'))} (CAS: {row[cas_column]})"
-                        for i, row in df_resultado_formula.iterrows()
-                    ]
-                    seleccionadas = st.multiselect(
-                        "Marque las filas para copiar los números de CAS:",
-                        opciones
+                    # Añadir columna de selección
+                    df_resultado_formula["Seleccionar"] = False
+
+                    # Mostrar tabla editable con checkbox para cada fila
+                    df_editado = st.data_editor(
+                        df_resultado_formula,
+                        column_config={
+                            "Seleccionar": st.column_config.CheckboxColumn(
+                                label="Seleccionar",
+                                help="Marque para copiar este CAS"
+                            )
+                        },
+                        use_container_width=True,
+                        key="data_editor_cas"
                     )
-                    if st.button("Copiar números de CAS"):
-                        # Extraemos los números de CAS de las opciones seleccionadas
-                        cas_seleccionados = []
-                        for opcion in seleccionadas:
-                            match = re.search(r"CAS:\s*(\S+)", opcion)
-                            if match:
-                                cas_seleccionados.append(match.group(1))
-                        cas_text = "\n".join(cas_seleccionados)
-                        st.text_area("Copie estos números de CAS:", cas_text, height=150)
+
+                    # Botón para copiar los números de CAS seleccionados
+                    if st.button("Copiar números de CAS seleccionados"):
+                        seleccionadas = df_editado[df_editado["Seleccionar"] == True]
+                        if not seleccionadas.empty:
+                            cas_seleccionados = seleccionadas[cas_column].dropna().astype(str).tolist()
+                            cas_text = "\n".join(cas_seleccionados)
+                            st.text_area("Copie estos números de CAS:", cas_text, height=150)
+                        else:
+                            st.warning("No has seleccionado ninguna fila.")
                 else:
                     st.info("No se encontró ninguna columna que contenga números CAS (ej. 'CAS', 'CAS No', etc.).")
-                # FIN DEL BLOQUE NUEVO
-                
-                # Extraer los números CAS para facilitar la búsqueda en restricciones (opcional)
+
+                # Opcional: Extraer y mostrar todos los números CAS encontrados
                 if "CAS" in df_resultado_formula.columns:
                     cas_encontrados = df_resultado_formula["CAS"].dropna().astype(str).tolist()
                     if cas_encontrados:
@@ -678,14 +684,13 @@ elif modo_busqueda == "Búsqueda por fórmula de ingredientes":
             # Búsqueda en los anexos por nombre de ingrediente
             st.subheader("Búsqueda en listados de sustancias permitidas/prohibidas (por nombre)")
             resultados_anexos = buscar_ingredientes_en_anexos(ingredientes)
-            
             if resultados_anexos:
                 for nombre_annex, resultados_annex in resultados_anexos.items():
                     st.write(f"### {nombre_annex}")
                     st.dataframe(resultados_annex)
             else:
                 st.info("No se encontraron ingredientes en los listados de restricciones.")
-                        
+
             # Opción para copiar toda la fórmula
             st.subheader("Copiar fórmula completa")
             st.text_area("Fórmula completa", formula_input, height=150)
