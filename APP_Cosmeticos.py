@@ -423,13 +423,12 @@ def buscar_cas_en_restricciones(cas_list, mostrar_info=False):
     return resultados
 
 # -----------------------------------------------------------
-# FUNCIÓN PARA BUSCAR INGREDIENTES POR NOMBRE (MODIFICADA)
+# FUNCIÓN PARA BUSCAR INGREDIENTES POR NOMBRE
 # -----------------------------------------------------------
-def buscar_ingredientes_por_nombre(ingredientes, busqueda_exacta=False):
+def buscar_ingredientes_por_nombre(ingredientes, exact=False):
     resultados_formula = []
-    ingredientes_no_encontrados = []
     
-    # Verificar la columna en la que está el nombre en la base de datos CAS
+    # Determinar la columna de nombre en la base de datos CAS
     columna_nombre = None
     if "Ingredient" in cas_db.columns:
         columna_nombre = "Ingredient"
@@ -438,116 +437,47 @@ def buscar_ingredientes_por_nombre(ingredientes, busqueda_exacta=False):
     
     if not columna_nombre:
         st.error("La base de datos CAS no tiene una columna identificable para el nombre del ingrediente.")
-        return pd.DataFrame(), ingredientes
+        return pd.DataFrame()
     
-    # Buscar cada ingrediente en la base de datos
+    # Buscar cada ingrediente según el modo (exacto o aproximado)
     for ing in ingredientes:
-        if busqueda_exacta:
-            # Búsqueda exacta: comparamos el valor exacto (ignorando mayúsculas/minúsculas)
-            df_ing = cas_db[cas_db[columna_nombre].astype(str).str.lower() == ing.lower()]
-        else:
-            # Búsqueda aproximada (como estaba originalmente)
-            df_ing = cas_db[cas_db[columna_nombre].astype(str).str.contains(ing, case=False, na=False)]
-        
-        if not df_ing.empty:
-            df_ing = df_ing.copy()
-            df_ing["Búsqueda"] = ing
-            resultados_formula.append(df_ing)
-        else:
-            ingredientes_no_encontrados.append(ing)
-    
-    # Combinar todos los resultados
-    if resultados_formula:
-        return pd.concat(resultados_formula, ignore_index=True), ingredientes_no_encontrados
-    else:
-        return pd.DataFrame(), ingredientes_no_encontrados
-
-# ------------------------------------------------------------------------
-# MODIFICACIÓN DEL CÓDIGO PARA LA SECCIÓN DE BÚSQUEDA POR FÓRMULA DE INGREDIENTES
-# ------------------------------------------------------------------------
-elif modo_busqueda == "Búsqueda por fórmula de ingredientes":
-    st.header("Búsqueda por fórmula de ingredientes")
-    st.write("Ingrese la lista de ingredientes separados por comas o por líneas:")
-    formula_input = st.text_area("Ingredientes:")
-    
-    # Agregar opción para busqueda exacta o aproximada
-    busqueda_exacta = st.checkbox("Busqueda exacta", value=False, help="Si se marca, busca coincidencias exactas con el nombre del ingrediente. Si no se marca, busca ingredientes que contengan el texto ingresado.")
-    
-    if busqueda_exacta:
-        st.info("Modo de búsqueda: EXACTA. Sólo coincidirán ingredientes con nombres idénticos.")
-    else:
-        st.info("Modo de búsqueda: APROXIMADA. Coincidirán ingredientes que contengan el texto ingresado.")
-
-    if st.button("Buscar Fórmula"):
-        if formula_input.strip():
-            # Procesar la entrada para obtener la lista de ingredientes
-            ingredientes = re.split(r'[\n,]+', formula_input)
-            ingredientes = [ing.strip() for ing in ingredientes if ing.strip()]
-            st.write("Ingredientes detectados:")
-            st.write(ingredientes)
-
-            # Búsqueda en la base de datos CAS para cada ingrediente
-            st.subheader("Búsqueda en la base de datos CAS")
-            
-            # Usar la función modificada con el parámetro de búsqueda exacta
-            df_resultado_formula, ingredientes_no_encontrados = buscar_ingredientes_por_nombre(
-                ingredientes, busqueda_exacta=busqueda_exacta
-            )
-            
-            # Mostrar los resultados de la búsqueda
-            if not df_resultado_formula.empty:
-                st.success(f"✅ Se encontraron {len(df_resultado_formula)} coincidencias de ingredientes")
-                st.dataframe(df_resultado_formula)
-                
-                # Extraer los números CAS para facilitar la búsqueda en restricciones
-                if "CAS" in df_resultado_formula.columns:
-                    cas_encontrados = df_resultado_formula["CAS"].dropna().astype(str).tolist()
-                    if cas_encontrados:
-                        st.subheader("Números CAS encontrados")
-                        cas_text = "\n".join(cas_encontrados)
-                        st.text_area("Copie estos números CAS para buscar en restricciones:", cas_text, height=150)
-            
-            # Mostrar ingredientes no encontrados (nuevo)
-            if ingredientes_no_encontrados:
-                st.warning(f"❌ {len(ingredientes_no_encontrados)} ingredientes no fueron encontrados")
-                
-                # Crear una tabla para mostrar los ingredientes no encontrados
-                no_encontrados_df = pd.DataFrame({
-                    "Ingrediente": ingredientes_no_encontrados,
-                    "Estado": ["No encontrado"] * len(ingredientes_no_encontrados)
+        if exact:
+            # Comparación exacta (ignorando mayúsculas y espacios adicionales)
+            mask = cas_db[columna_nombre].astype(str).str.lower().str.strip() == ing.lower().strip()
+            df_ing = cas_db[mask]
+            if df_ing.empty:
+                # Si no se encuentra, crear una fila indicando "No encontrado"
+                df_not_found = pd.DataFrame({
+                    "Búsqueda": [ing],
+                    columna_nombre: [ing],
+                    "Resultado": ["No encontrado"]
                 })
-                st.dataframe(no_encontrados_df)
-                
-                if busqueda_exacta:
-                    st.info("""
-                    Sugerencias:
-                    - Pruebe con búsqueda aproximada para resultados más amplios
-                    - Verifique posibles errores de escritura en los nombres
-                    - El nombre debe coincidir exactamente con el registro en la base de datos
-                    """)
-            
-            if len(ingredientes_no_encontrados) == len(ingredientes):
-                st.error("Ninguno de los ingredientes fue encontrado en la base de datos CAS.")
-
-            # Búsqueda en los anexos por nombre de ingrediente (mantener esta parte igual)
-            st.subheader("Búsqueda en listados de sustancias permitidas/prohibidas (por nombre)")
-            
-            # Modificar la función de búsqueda en anexos si se desea la misma funcionalidad
-            # para búsqueda exacta/aproximada
-            resultados_anexos = buscar_ingredientes_en_anexos(ingredientes)
-            
-            if resultados_anexos:
-                for nombre_annex, resultados_annex in resultados_anexos.items():
-                    st.write(f"### {nombre_annex}")
-                    st.dataframe(resultados_annex)
+                resultados_formula.append(df_not_found)
             else:
-                st.info("No se encontraron ingredientes en los listados de restricciones.")
-                        
-            # Opción para copiar toda la fórmula
-            st.subheader("Copiar fórmula completa")
-            st.text_area("Fórmula completa", formula_input, height=150)
+                df_ing = df_ing.copy()
+                df_ing["Búsqueda"] = ing
+                resultados_formula.append(df_ing)
         else:
-            st.warning("Ingrese una lista de ingredientes válida.")
+            # Búsqueda aproximada: se buscan coincidencias parciales
+            mask = cas_db[columna_nombre].astype(str).str.contains(ing, case=False, na=False)
+            df_ing = cas_db[mask]
+            if not df_ing.empty:
+                df_ing = df_ing.copy()
+                df_ing["Búsqueda"] = ing
+                resultados_formula.append(df_ing)
+            else:
+                # También se puede agregar una fila "No encontrado" en modo aproximado
+                df_not_found = pd.DataFrame({
+                    "Búsqueda": [ing],
+                    columna_nombre: [ing],
+                    "Resultado": ["No encontrado"]
+                })
+                resultados_formula.append(df_not_found)
+    
+    if resultados_formula:
+        return pd.concat(resultados_formula, ignore_index=True)
+    else:
+        return pd.DataFrame()
 
 # -----------------------------------------------------------
 # FUNCIÓN PARA BUSCAR INGREDIENTES EN ANEXOS
@@ -685,6 +615,9 @@ elif modo_busqueda == "Búsqueda por fórmula de ingredientes":
     st.write("Ingrese la lista de ingredientes separados por comas o por líneas:")
     formula_input = st.text_area("Ingredientes:")
 
+    # Agregar selector para elegir búsqueda exacta o aproximada
+    tipo_busqueda = st.radio("Tipo de búsqueda", ["Aproximada", "Exacta"])
+
     if st.button("Buscar Fórmula"):
         if formula_input.strip():
             # Procesar la entrada para obtener la lista de ingredientes
@@ -693,10 +626,10 @@ elif modo_busqueda == "Búsqueda por fórmula de ingredientes":
             st.write("Ingredientes detectados:")
             st.write(ingredientes)
 
-            # Búsqueda en la base de datos CAS para cada ingrediente
+            # Búsqueda en la base de datos CAS usando el modo seleccionado
             st.subheader("Búsqueda en la base de datos CAS")
-            
-            df_resultado_formula = buscar_ingredientes_por_nombre(ingredientes)
+            exact_search = True if tipo_busqueda == "Exacta" else False
+            df_resultado_formula = buscar_ingredientes_por_nombre(ingredientes, exact=exact_search)
             if not df_resultado_formula.empty:
                 st.dataframe(df_resultado_formula)
                 
@@ -712,7 +645,6 @@ elif modo_busqueda == "Búsqueda por fórmula de ingredientes":
 
             # Búsqueda en los anexos por nombre de ingrediente
             st.subheader("Búsqueda en listados de sustancias permitidas/prohibidas (por nombre)")
-            
             resultados_anexos = buscar_ingredientes_en_anexos(ingredientes)
             
             if resultados_anexos:
