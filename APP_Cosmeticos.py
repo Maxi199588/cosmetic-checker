@@ -634,10 +634,18 @@ elif modo_busqueda == "Búsqueda por fórmula de ingredientes":
                 st.dataframe(df_resultado_formula)
                 
                 # NUEVO BLOQUE: Selección de filas y copiado de números de CAS
-                if "CAS" in df_resultado_formula.columns:
+                cas_column_candidates = ["CAS", "CAS No", "CAS_number"]  # <-- Ajusta según nombres que pueda tener tu columna
+                cas_column = None
+                
+                for col in cas_column_candidates:
+                    if col in df_resultado_formula.columns:
+                        cas_column = col
+                        break
+                
+                if cas_column:
                     # Creamos opciones para seleccionar, mostrando información relevante de cada fila
                     opciones = [
-                        f"Fila {i}: {row.get('Ingredient', row.get('Name', 'Desconocido'))} (CAS: {row['CAS']})"
+                        f"Fila {i}: {row.get('Ingredient', row.get('Name', 'Desconocido'))} (CAS: {row[cas_column]})"
                         for i, row in df_resultado_formula.iterrows()
                     ]
                     seleccionadas = st.multiselect(
@@ -653,6 +661,8 @@ elif modo_busqueda == "Búsqueda por fórmula de ingredientes":
                                 cas_seleccionados.append(match.group(1))
                         cas_text = "\n".join(cas_seleccionados)
                         st.text_area("Copie estos números de CAS:", cas_text, height=150)
+                else:
+                    st.info("No se encontró ninguna columna que contenga números CAS (ej. 'CAS', 'CAS No', etc.).")
                 # FIN DEL BLOQUE NUEVO
                 
                 # Extraer los números CAS para facilitar la búsqueda en restricciones (opcional)
