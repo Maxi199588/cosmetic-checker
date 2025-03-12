@@ -631,53 +631,47 @@ elif modo_busqueda == "Búsqueda por fórmula de ingredientes":
             exact_search = True if tipo_busqueda == "Exacta" else False
             df_resultado_formula = buscar_ingredientes_por_nombre(ingredientes, exact=exact_search)
             if not df_resultado_formula.empty:
-                st.write("Resultados obtenidos:")
-                st.dataframe(df_resultado_formula)
-
-                # BLOQUE NUEVO: Agregar checkboxes en la tabla usando st.data_editor para seleccionar filas
-                cas_column_candidates = ["CAS", "CAS No", "CAS_number"]  # Ajusta según nombres posibles de la columna
+                # Detectar la columna que contiene los números de CAS (según posibles nombres)
+                cas_column_candidates = ["CAS", "CAS No", "CAS_number"]
                 cas_column = None
                 for col in cas_column_candidates:
                     if col in df_resultado_formula.columns:
                         cas_column = col
                         break
 
-                if cas_column:
-                    # Añadir columna de selección
-                    df_resultado_formula["Seleccionar"] = False
+                # Agregar columna de selección y reordenar para que aparezca primero
+                df_edit = df_resultado_formula.copy()
+                df_edit["Seleccionar"] = False
+                cols = list(df_edit.columns)
+                cols.remove("Seleccionar")
+                cols.insert(0, "Seleccionar")
+                df_edit = df_edit[cols]
 
-                    # Mostrar tabla editable con checkbox para cada fila
-                    df_editado = st.data_editor(
-                        df_resultado_formula,
-                        column_config={
-                            "Seleccionar": st.column_config.CheckboxColumn(
-                                label="Seleccionar",
-                                help="Marque para copiar este CAS"
-                            )
-                        },
-                        use_container_width=True,
-                        key="data_editor_cas"
-                    )
+                # Mostrar la tabla editable con checkboxes usando st.data_editor
+                df_editado = st.data_editor(
+                    df_edit,
+                    column_config={
+                        "Seleccionar": st.column_config.CheckboxColumn(
+                            label="Seleccionar",
+                            help="Marque para copiar este CAS"
+                        )
+                    },
+                    use_container_width=True,
+                    key="data_editor_cas"
+                )
 
-                    # Botón para copiar los números de CAS seleccionados
-                    if st.button("Copiar números de CAS seleccionados"):
+                # Botón para copiar los números de CAS de las filas seleccionadas
+                if st.button("Copiar números de CAS seleccionados"):
+                    if cas_column:
                         seleccionadas = df_editado[df_editado["Seleccionar"] == True]
                         if not seleccionadas.empty:
                             cas_seleccionados = seleccionadas[cas_column].dropna().astype(str).tolist()
                             cas_text = "\n".join(cas_seleccionados)
                             st.text_area("Copie estos números de CAS:", cas_text, height=150)
                         else:
-                            st.warning("No has seleccionado ninguna fila.")
-                else:
-                    st.info("No se encontró ninguna columna que contenga números CAS (ej. 'CAS', 'CAS No', etc.).")
-
-                # Opcional: Extraer y mostrar todos los números CAS encontrados
-                if "CAS" in df_resultado_formula.columns:
-                    cas_encontrados = df_resultado_formula["CAS"].dropna().astype(str).tolist()
-                    if cas_encontrados:
-                        st.subheader("Números CAS encontrados (todos)")
-                        cas_text = "\n".join(cas_encontrados)
-                        st.text_area("Copie estos números CAS para buscar en restricciones:", cas_text, height=150)
+                            st.warning("No se ha seleccionado ninguna fila.")
+                    else:
+                        st.warning("No se encontró ninguna columna de CAS en los resultados.")
             else:
                 st.info("No se encontraron coincidencias en la base de datos CAS para los ingredientes ingresados.")
 
