@@ -633,11 +633,33 @@ elif modo_busqueda == "Búsqueda por fórmula de ingredientes":
             if not df_resultado_formula.empty:
                 st.dataframe(df_resultado_formula)
                 
-                # Extraer los números CAS para facilitar la búsqueda en restricciones
+                # NUEVO BLOQUE: Selección de filas y copiado de números de CAS
+                if "CAS" in df_resultado_formula.columns:
+                    # Creamos opciones para seleccionar, mostrando información relevante de cada fila
+                    opciones = [
+                        f"Fila {i}: {row.get('Ingredient', row.get('Name', 'Desconocido'))} (CAS: {row['CAS']})"
+                        for i, row in df_resultado_formula.iterrows()
+                    ]
+                    seleccionadas = st.multiselect(
+                        "Marque las filas para copiar los números de CAS:",
+                        opciones
+                    )
+                    if st.button("Copiar números de CAS"):
+                        # Extraemos los números de CAS de las opciones seleccionadas
+                        cas_seleccionados = []
+                        for opcion in seleccionadas:
+                            match = re.search(r"CAS:\s*(\S+)", opcion)
+                            if match:
+                                cas_seleccionados.append(match.group(1))
+                        cas_text = "\n".join(cas_seleccionados)
+                        st.text_area("Copie estos números de CAS:", cas_text, height=150)
+                # FIN DEL BLOQUE NUEVO
+                
+                # Extraer los números CAS para facilitar la búsqueda en restricciones (opcional)
                 if "CAS" in df_resultado_formula.columns:
                     cas_encontrados = df_resultado_formula["CAS"].dropna().astype(str).tolist()
                     if cas_encontrados:
-                        st.subheader("Números CAS encontrados")
+                        st.subheader("Números CAS encontrados (todos)")
                         cas_text = "\n".join(cas_encontrados)
                         st.text_area("Copie estos números CAS para buscar en restricciones:", cas_text, height=150)
             else:
