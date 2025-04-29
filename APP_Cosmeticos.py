@@ -646,17 +646,6 @@ if modo_busqueda == "Búsqueda por fórmula de ingredientes":
         else:
             st.info("No se encontraron coincidencias en la base de datos CAS para los ingredientes ingresados.")
 
-        # Búsqueda en los anexos por nombre de ingrediente (usando la lista almacenada)
-        st.subheader("Búsqueda en listados de sustancias permitidas/prohibidas (por nombre)")
-        if "ingredientes" in st.session_state:
-            resultados_anexos = buscar_ingredientes_en_anexos(st.session_state["ingredientes"])
-            if resultados_anexos:
-                for nombre_annex, resultados_annex in resultados_anexos.items():
-                    st.write(f"### {nombre_annex}")
-                    st.dataframe(resultados_annex)
-            else:
-                st.info("No se encontraron ingredientes en los listados de restricciones.")
-
         # Opción para copiar toda la fórmula
         st.subheader("Copiar fórmula completa")
         st.text_area("Fórmula completa", formula_input, height=150)
