@@ -562,50 +562,16 @@ annex_data = {
 }
 
 # -----------------------------------------------------------
-# SELECCIÓN DEL MODO DE BÚSQUEDA
+# SELECCIÓN DEL MODO DE BÚSQUEDA (sin opción de CAS)
 # -----------------------------------------------------------
 modo_busqueda = st.sidebar.selectbox(
     "Seleccione el método de búsqueda",
-    ["Búsqueda por número CAS", "Búsqueda por fórmula de ingredientes", "Búsqueda en restricciones por CAS", "Búsqueda en PubChem"]
+    [
+        "Búsqueda por fórmula de ingredientes",
+        "Búsqueda en restricciones por CAS",
+        "Búsqueda en PubChem"
+    ]
 )
-
-# ------------------------------------------------------------------------
-# 1. Búsqueda por número CAS
-# ------------------------------------------------------------------------
-if modo_busqueda == "Búsqueda por número CAS":
-    st.header("Búsqueda por número CAS")
-    cas_number_input = st.text_area("Ingrese uno o varios números CAS (uno por línea):")
-
-    if st.button("Buscar CAS"):
-        if cas_number_input.strip():
-            # Procesar la entrada para obtener la lista de CAS
-            cas_list = re.split(r'[\n,;]+', cas_number_input)
-            cas_list = [c.strip() for c in cas_list if c.strip()]
-            st.write("CAS detectados:", cas_list)
-
-            # Buscar en la base de datos CAS
-            if not cas_db.empty and "CAS" in cas_db.columns:
-                for cas_number in cas_list:
-                    result_cas = cas_db[cas_db["CAS"].astype(str).str.contains(cas_number, case=False, na=False)]
-                    st.subheader(f"Resultados en la base de datos CAS para: {cas_number}")
-                    if not result_cas.empty:
-                        st.dataframe(result_cas)
-                    else:
-                        st.info(f"No se encontró el número CAS {cas_number} en la base de datos.")
-
-            # Buscar en los anexos
-            st.subheader("Resultados en listados de sustancias permitidas/prohibidas")
-            resultados = buscar_cas_en_restricciones(cas_list)
-            
-            for cas_number, resultado in resultados.items():
-                if resultado["encontrado"]:
-                    for anexo in resultado["anexos"]:
-                        st.write(f"### CAS {cas_number} encontrado en {anexo['nombre']}")
-                        st.dataframe(anexo["data"])
-                else:
-                    st.info(f"CAS {cas_number} no se encuentra en los listados de restricciones.")
-        else:
-            st.warning("Ingrese al menos un número CAS.")
 
 # ------------------------------------------------------------------------
 # 2. Búsqueda por fórmula de ingredientes
