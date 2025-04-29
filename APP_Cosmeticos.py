@@ -36,10 +36,6 @@ def load_data():
     cas_folder = os.path.join(base_path, "CAS")
     restricciones_folder = os.path.join(base_path, "RESTRICCIONES")
 
-    base_path = os.path.dirname(os.path.abspath(__file__))
-    cas_folder = os.path.join(base_path, "CAS")
-    restricciones_folder = os.path.join(base_path, "RESTRICCIONES")
-    
     # Rutas a los archivos Excel de los anexos
     annex_ii_path  = os.path.join(restricciones_folder, "COSING_Annex_II_v2.xlsx")
     annex_iii_path = os.path.join(restricciones_folder, "COSING_Annex_III_v2.xlsx")
