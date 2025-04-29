@@ -572,7 +572,7 @@ modo_busqueda = st.sidebar.selectbox(
 # ------------------------------------------------------------------------
 # 2. Búsqueda por fórmula de ingredientes
 # ------------------------------------------------------------------------
-elif modo_busqueda == "Búsqueda por fórmula de ingredientes":
+if modo_busqueda == "Búsqueda por fórmula de ingredientes":
     st.header("Búsqueda por fórmula de ingredientes")
     st.write("Ingrese la lista de ingredientes separados por comas o por líneas:")
     formula_input = st.text_area("Ingredientes:")
