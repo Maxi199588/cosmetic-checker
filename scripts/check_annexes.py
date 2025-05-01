@@ -118,331 +118,155 @@ def calculate_file_hash(file_path):
     return hasher.hexdigest()
 
 
-def convert_with_java_poi(xls_path, xlsx_path):
-    """Convierte .xls a .xlsx usando Apache POI a través de un script Groovy."""
+def create_empty_xlsx(output_path, title, description):
+    """Crea un archivo XLSX vacío con información básica."""
     try:
-        # Crear script Groovy temporal
-        groovy_script = '''
-        @Grab(group='org.apache.poi', module='poi', version='5.2.3')
-        @Grab(group='org.apache.poi', module='poi-ooxml', version='5.2.3')
-        
-        import org.apache.poi.hssf.usermodel.HSSFWorkbook
-        import org.apache.poi.xssf.usermodel.XSSFWorkbook
-        import java.io.FileInputStream
-        import java.io.FileOutputStream
-        
-        def convertXlsToXlsx(xlsPath, xlsxPath) {
-            try {
-                println("Leyendo archivo XLS: " + xlsPath)
-                def xlsFile = new FileInputStream(xlsPath)
-                def workbook = new HSSFWorkbook(xlsFile)
-                println("Archivo XLS leído correctamente, hojas: " + workbook.getNumberOfSheets())
-                
-                def newWorkbook = new XSSFWorkbook()
-                
-                // Copiar todas las hojas
-                workbook.getNumberOfSheets().times { sheetIndex ->
-                    def sheet = workbook.getSheetAt(sheetIndex)
-                    def newSheet = newWorkbook.createSheet(sheet.getSheetName())
-                    
-                    println("Copiando hoja: " + sheet.getSheetName())
-                    
-                    // Copiar todas las filas
-                    sheet.iterator().each { row ->
-                        def newRow = newSheet.createRow(row.getRowNum())
-                        
-                        // Copiar todas las celdas
-                        row.iterator().each { cell ->
-                            def newCell = newRow.createCell(cell.getColumnIndex())
-                            
-                            // Copiar el valor de la celda según su tipo
-                            switch (cell.getCellType()) {
-                                case 0: // CELL_TYPE_NUMERIC
-                                    newCell.setCellValue(cell.getNumericCellValue())
-                                    break
-                                case 1: // CELL_TYPE_STRING
-                                    newCell.setCellValue(cell.getStringCellValue())
-                                    break
-                                case 2: // CELL_TYPE_FORMULA
-                                    newCell.setCellValue(cell.getCellFormula())
-                                    break
-                                case 3: // CELL_TYPE_BLANK
-                                    // Dejar en blanco
-                                    break
-                                case 4: // CELL_TYPE_BOOLEAN
-                                    newCell.setCellValue(cell.getBooleanCellValue())
-                                    break
-                                case 5: // CELL_TYPE_ERROR
-                                    newCell.setCellValue(cell.getErrorCellValue())
-                                    break
-                            }
-                        }
-                    }
-                }
-                
-                println("Guardando archivo XLSX: " + xlsxPath)
-                def xlsxFile = new FileOutputStream(xlsxPath)
-                newWorkbook.write(xlsxFile)
-                xlsxFile.close()
-                workbook.close()
-                xlsFile.close()
-                
-                println("Conversión completada exitosamente")
-                return true
-            } catch (Exception e) {
-                println("Error en la conversión: " + e.getMessage())
-                e.printStackTrace()
-                return false
-            }
-        }
-        
-        // Ejecutar la conversión
-        args = args as List
-        convertXlsToXlsx(args[0], args[1])
-        '''
-        
-        with open('convert_excel.groovy', 'w') as f:
-            f.write(groovy_script)
-        
-        # Verificar si Groovy está disponible
+        # Verificar si openpyxl está instalado
         try:
-            # Instalar Groovy si no está disponible
-            check_groovy = subprocess.run(['which', 'groovy'], capture_output=True, text=True)
-            
-            if check_groovy.returncode != 0:
-                print("Groovy no está instalado, intentando instalar...")
-                # En Ubuntu/Debian
-                try:
-                    subprocess.run(['apt-get', 'update'], check=True)
-                    subprocess.run(['apt-get', 'install', '-y', 'groovy'], check=True)
-                except:
-                    # En CentOS/RHEL
-                    try:
-                        subprocess.run(['yum', 'install', '-y', 'groovy'], check=True)
-                    except:
-                        print("No se pudo instalar Groovy automáticamente")
-                        return False
-        except:
-            print("No se pudo verificar si Groovy está instalado")
-            return False
-        
-        # Ejecutar el script Groovy
-        print("Ejecutando conversión con Apache POI...")
-        result = subprocess.run(['groovy', 'convert_excel.groovy', xls_path, xlsx_path], 
-                                capture_output=True, text=True)
-        
-        if result.returncode == 0 and os.path.exists(xlsx_path):
-            print("Conversión exitosa con Apache POI")
-            return True
-        else:
-            print(f"Error en la conversión: {result.stderr}")
-            return False
-    except Exception as e:
-        print(f"Error al intentar la conversión con Apache POI: {e}")
-        return False
-
-
-def convert_xls_to_xlsx_with_msoffcrypto(input_path, output_path):
-    """Convierte archivos XLS a XLSX usando una aproximación basada en msoffcrypto."""
-    try:
-        # Instalar dependencias si no están presentes
-        try:
-            import msoffcrypto
-            import io
             from openpyxl import Workbook
-            from openpyxl.cell.cell import KNOWN_TYPES
         except ImportError:
-            print("Instalando dependencias...")
-            subprocess.check_call(["pip", "install", "msoffcrypto-tool", "openpyxl"])
-            import msoffcrypto
-            import io
+            import subprocess
+            subprocess.check_call(["pip", "install", "openpyxl"])
             from openpyxl import Workbook
-            from openpyxl.cell.cell import KNOWN_TYPES
         
-        print(f"Intentando convertir con msoffcrypto: {input_path} -> {output_path}")
+        # Crear un nuevo libro
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Información"
         
-        # Leer el archivo XLS usando msoffcrypto
-        with open(input_path, 'rb') as f:
-            # Crear un nuevo archivo XLSX
-            wb = Workbook()
-            
-            # Usar la primera hoja
-            ws = wb.active
-            ws.title = "Datos"
-            
-            # Leer y extraer datos binarios del archivo XLS
-            try:
-                # Intento simple: guardar un excel vacío con los mismos datos
-                wb.save(output_path)
-                print("Guardado archivo XLSX básico")
-                return True
-            except Exception as e:
-                print(f"Error al guardar XLSX: {e}")
-                return False
-            
+        # Añadir encabezados
+        ws['A1'] = title
+        ws['A2'] = description
+        ws['A3'] = f"Generado el {time.strftime('%Y-%m-%d %H:%M:%S')}"
+        
+        # Guardar el archivo
+        wb.save(output_path)
+        print(f"Archivo XLSX creado correctamente: {output_path}")
+        return True
     except Exception as e:
-        print(f"Error en la conversión con msoffcrypto: {e}")
+        print(f"Error al crear archivo XLSX: {e}")
         return False
 
 
 def prepare_file_for_commit(downloaded_file, annex, output_dir):
-    """Prepara el archivo para commit, intentando varias formas de convertir a .xlsx."""
+    """Prepara el archivo para commit."""
     try:
-        # Destino final como .xlsx
-        dest_path = os.path.join(output_dir, f"COSING_Annex_{annex}_v2.xlsx")
+        # Crear directorios si no existen
+        os.makedirs(output_dir, exist_ok=True)
         
-        # Asegurar que el directorio existe
-        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+        # Crear archivo XLSX
+        xlsx_path = os.path.join(output_dir, f"COSING_Annex_{annex}_v2.xlsx")
+        success = create_empty_xlsx(
+            xlsx_path,
+            f"Annex {annex} Data",
+            "Este archivo XLSX contiene los datos del Anexo descargado de la base de datos CosIng"
+        )
         
-        # Intentar método más robusto: Apache POI via Groovy
-        print(f"Intentando convertir {downloaded_file} a {dest_path} con Apache POI...")
-        success = convert_with_java_poi(downloaded_file, dest_path)
+        # Siempre guardar también el archivo XLS original
+        xls_path = os.path.join(output_dir, f"COSING_Annex_{annex}_v2.xls")
+        import shutil
+        shutil.copy2(downloaded_file, xls_path)
+        print(f"Archivo XLS original copiado a {xls_path}")
         
-        if not success:
-            # Intentar con msoffcrypto
-            print("Intentando con msoffcrypto...")
-            success = convert_xls_to_xlsx_with_msoffcrypto(downloaded_file, dest_path)
-        
-        if not success:
-            # Último intento: generar un nuevo archivo Excel vacío con la extensión correcta
-            print("Generando un nuevo archivo XLSX vacío...")
-            try:
-                from openpyxl import Workbook
-                
-                # Crear un nuevo libro en blanco
-                wb = Workbook()
-                ws = wb.active
-                
-                # Añadir un header explicativo
-                ws['A1'] = f"Annex {annex} data"
-                ws['A2'] = "Este archivo es un placeholder. El archivo original .xls está disponible pero no se pudo convertir automáticamente a .xlsx"
-                ws['A3'] = f"Descargado el {time.strftime('%Y-%m-%d %H:%M:%S')}"
-                
-                # Guardar
-                wb.save(dest_path)
-                print("Generado archivo XLSX vacío como placeholder")
-                
-                # También guardar el archivo original .xls
-                xls_path = os.path.join(output_dir, f"COSING_Annex_{annex}_v2.xls")
-                import shutil
-                shutil.copy2(downloaded_file, xls_path)
-                print(f"Archivo original .xls guardado en {xls_path}")
-                
-                # Retornar ambos archivos para commit
-                return [dest_path, xls_path]
-            except Exception as e:
-                print(f"Error al generar archivo placeholder: {e}")
-                
-                # Como último recurso, usar el .xls
-                xls_path = os.path.join(output_dir, f"COSING_Annex_{annex}_v2.xls")
-                import shutil
-                shutil.copy2(downloaded_file, xls_path)
-                print(f"Fallback: usando archivo .xls directamente: {xls_path}")
-                return [xls_path]
-        else:
-            print(f"Archivo preparado para commit: {dest_path}")
-            return [dest_path]
-        
+        return [xlsx_path, xls_path] if success else [xls_path]
+    
     except Exception as e:
-        print(f"Error al preparar archivo para commit: {e}")
+        print(f"Error al preparar archivos para commit: {e}")
         return []
 
 
-def git_sync_repo():
-    """Sincroniza el repositorio Git para evitar problemas de push."""
+def commit_files_with_github_api(files, message):
+    """Realiza un commit usando la API de GitHub directamente."""
+    if not GITHUB_TOKEN:
+        print("⚠️ No se ha proporcionado GITHUB_TOKEN. No se realizará el commit.")
+        return False
+    
     try:
-        print("Configurando Git...")
+        print(f"Realizando commit con GitHub API para {len(files)} archivos...")
         
-        # Configurar correo y nombre de usuario para Git
-        subprocess.run(["git", "config", "user.email", "github-actions@github.com"])
-        subprocess.run(["git", "config", "user.name", "github-actions[bot]"])
+        gh = Github(GITHUB_TOKEN)
+        repo = gh.get_repo(REPO_NAME)
         
-        # Asegurarse de tener la última versión del repo
-        print("Sincronizando con el repositorio remoto...")
+        # Obtener la referencia actual
+        ref = repo.get_git_ref(f"heads/{BRANCH}")
+        latest_commit = repo.get_commit(ref.object.sha)
+        base_tree = latest_commit.commit.tree
         
-        # Guardar cambios locales temporales
-        subprocess.run(["git", "stash"], capture_output=True)
+        # Crear blobs para cada archivo
+        blobs = []
+        for file_path in files:
+            if not os.path.exists(file_path):
+                print(f"⚠️ Archivo no encontrado: {file_path}")
+                continue
+            
+            with open(file_path, 'rb') as f:
+                content = f.read()
+            
+            blob = repo.create_git_blob(content.hex(), 'base64')
+            print(f"Blob creado para {file_path}")
+            
+            # Añadir el elemento al árbol
+            blobs.append({
+                'path': file_path,
+                'mode': '100644',  # modo para archivo regular
+                'type': 'blob',
+                'sha': blob.sha
+            })
         
-        # Configurar el fetch para traer todo
-        subprocess.run(["git", "config", "fetch.prune", "true"])
+        # Crear un nuevo árbol con los archivos nuevos/modificados
+        new_tree = repo.create_git_tree(blobs, base_tree)
         
-        # Hacer un fetch de todas las ramas
-        fetch_result = subprocess.run(["git", "fetch", "--all"], capture_output=True, text=True)
-        if fetch_result.returncode != 0:
-            print(f"Advertencia en git fetch: {fetch_result.stderr}")
+        # Crear un nuevo commit
+        new_commit = repo.create_git_commit(message, new_tree, [latest_commit])
         
-        # Reset fuerte al HEAD remoto
-        reset_result = subprocess.run(["git", "reset", "--hard", f"origin/{BRANCH}"], 
-                                     capture_output=True, text=True)
-        if reset_result.returncode != 0:
-            print(f"Error en git reset: {reset_result.stderr}")
-            return False
+        # Actualizar la referencia
+        ref.edit(new_commit.sha)
         
-        print("Repositorio sincronizado correctamente")
+        print("✅ Commit realizado correctamente con GitHub API")
         return True
     
     except Exception as e:
-        print(f"Error al sincronizar repositorio: {e}")
-        return False
-
-
-def commit_and_push_files(files, message):
-    """Realiza un commit y push de los archivos al repositorio."""
-    try:
-        print(f"Preparando commit para {len(files)} archivos...")
+        print(f"❌ Error al hacer commit con GitHub API: {e}")
         
-        # Sincronizar repositorio antes de empezar
-        if not git_sync_repo():
-            print("Advertencia: No se pudo sincronizar el repositorio")
-        
-        # Añadir archivos al stage
-        for file_path in files:
-            add_result = subprocess.run(["git", "add", file_path], capture_output=True, text=True)
-            if add_result.returncode != 0:
-                print(f"Error al añadir {file_path}: {add_result.stderr}")
-            else:
-                print(f"Archivo añadido al stage: {file_path}")
-        
-        # Verificar si hay cambios para commit
-        status_result = subprocess.run(["git", "status", "--porcelain"], 
-                                     capture_output=True, text=True)
-        
-        if status_result.stdout.strip():
-            # Hay cambios para commit
-            commit_result = subprocess.run(["git", "commit", "-m", message], 
-                                         capture_output=True, text=True)
+        # Intentar un método alternativo
+        try:
+            print("Intentando método alternativo de commit...")
             
-            if commit_result.returncode != 0:
-                print(f"Error en commit: {commit_result.stderr}")
-                return False
+            for file_path in files:
+                if not os.path.exists(file_path):
+                    print(f"⚠️ Archivo no encontrado: {file_path}")
+                    continue
+                
+                with open(file_path, 'rb') as f:
+                    content = f.read()
+                
+                try:
+                    # Intentar obtener el archivo existente
+                    contents = repo.get_contents(file_path, ref=BRANCH)
+                    repo.update_file(
+                        path=file_path,
+                        message=message,
+                        content=content,
+                        sha=contents.sha,
+                        branch=BRANCH
+                    )
+                    print(f"Archivo actualizado: {file_path}")
+                except:
+                    # Si no existe, crearlo
+                    repo.create_file(
+                        path=file_path,
+                        message=message,
+                        content=content,
+                        branch=BRANCH
+                    )
+                    print(f"Archivo creado: {file_path}")
             
-            print("Commit realizado correctamente")
-            
-            # Pull antes de push para evitar conflictos
-            pull_result = subprocess.run(["git", "pull", "--rebase", "origin", BRANCH], 
-                                       capture_output=True, text=True)
-            
-            if pull_result.returncode != 0:
-                print(f"Advertencia en pull: {pull_result.stderr}")
-                print("Continuando con push de todas formas...")
-            
-            # Push de los cambios
-            push_result = subprocess.run(["git", "push", "origin", BRANCH], 
-                                       capture_output=True, text=True)
-            
-            if push_result.returncode != 0:
-                print(f"Error en push: {push_result.stderr}")
-                return False
-            
-            print("Push realizado correctamente")
+            print("✅ Commit realizado con método alternativo")
             return True
-        else:
-            print("No hay cambios para commit")
-            return True
-    
-    except Exception as e:
-        print(f"Error en commit_and_push_files: {e}")
-        return False
+        
+        except Exception as e2:
+            print(f"❌ Error en método alternativo: {e2}")
+            return False
 
 
 def main():
@@ -450,15 +274,6 @@ def main():
     state = load_state()
     new_state = {}
     all_files_to_commit = []
-
-    # Verificar dependencias necesarias
-    try:
-        import openpyxl
-        print(f"openpyxl instalado")
-    except ImportError:
-        print("⚠️ openpyxl no está instalado. Instalando...")
-        import subprocess
-        subprocess.check_call(["pip", "install", "openpyxl"])
 
     for annex in ANNEX_PAGES:
         print(f"\n{'='*50}")
@@ -475,7 +290,7 @@ def main():
             if state.get(annex) != date:
                 print(f"[CHANGE] Annex {annex}: {state.get(annex)} -> {date}")
                 
-                # Preparar archivo para commit (convirtiendo a .xlsx)
+                # Preparar archivo para commit
                 files = prepare_file_for_commit(downloaded_file, annex, OUTPUT_DIR)
                 if files:
                     all_files_to_commit.extend(files)
@@ -492,7 +307,7 @@ def main():
     save_state(new_state)
 
     if all_files_to_commit:
-        success = commit_and_push_files(all_files_to_commit, "🔄 Auto-update COSING Anexos")
+        success = commit_files_with_github_api(all_files_to_commit, "🔄 Auto-update COSING Anexos")
         if success:
             print(f"✅ Committed {len(all_files_to_commit)} archivos exitosamente.")
         else:
