@@ -6,6 +6,7 @@ import requests
 import io
 import xlrd            # pip install xlrd
 from openpyxl import load_workbook  # pip install openpyxl
+import pandas as pd                 # pip install pandas
 from github import Github            # pip install PyGithub
 
 # —— CONFIGURACIÓN ——
@@ -24,8 +25,7 @@ DATE_PATTERN = re.compile(r"Last update:\s*(\d{2}/\d{2}/\d{4})")
 def load_state():
     if os.path.exists(STATE_FILE):
         try:
-            with open(STATE_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
+            return json.load(open(STATE_FILE, "r", encoding="utf-8"))
         except json.JSONDecodeError:
             return {}
     return {}
@@ -41,21 +41,21 @@ def fetch_and_parse_date(url):
     Descarga el XLS (.xls o .xlsx) desde la URL y extrae la fecha combinada en la celda A3.
     Devuelve la fecha 'DD/MM/YYYY' o None.
     """
-    r = requests.get(url, timeout=30)
-    r.raise_for_status()
-    content = r.content
+    resp = requests.get(url, timeout=30)
+    resp.raise_for_status()
+    content = resp.content
 
     cell_value = None
-    # Intentar con openpyxl (.xlsx)
+    # Si es .xlsx, prueba con openpyxl
     if url.lower().endswith('.xlsx'):
         try:
-            wb = load_workbook(filename=io.BytesIO(content), read_only=True, data_only=True)
+            wb = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
             ws = wb.active
             cell_value = ws.cell(row=3, column=1).value
         except Exception:
             cell_value = None
-    # Si no resultó o es .xls, usar xlrd
-    if cell_value is None and url.lower().endswith('.xls') or cell_value is None:
+    # Si no funcionó o url .xls, usa xlrd
+    if cell_value is None:
         try:
             book = xlrd.open_workbook(file_contents=content)
             sheet = book.sheet_by_index(0)
@@ -65,29 +65,36 @@ def fetch_and_parse_date(url):
 
     if not isinstance(cell_value, str):
         return None
-    m = DATE_PATTERN.search(cell_value)
-    return m.group(1) if m else None
+    match = DATE_PATTERN.search(cell_value)
+    return match.group(1) if match else None
 
 
 def download_file(url, dest_path):
-    r = requests.get(url, timeout=30)
-    r.raise_for_status()
+    resp = requests.get(url, timeout=30)
+    resp.raise_for_status()
     os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-    with open(dest_path, "wb") as f:
-        f.write(r.content)
+    with open(dest_path, 'wb') as f:
+        f.write(resp.content)
+
+
+def convert_xls_to_xlsx(xls_path):
+    df = pd.read_excel(xls_path, engine='xlrd')
+    xlsx_path = xls_path[:-4] + '.xlsx'
+    df.to_excel(xlsx_path, index=False, engine='openpyxl')
+    os.remove(xls_path)
+    return xlsx_path
 
 
 def commit_and_push(files, message):
     gh = Github(GITHUB_TOKEN)
     repo = gh.get_repo(REPO_NAME)
-    for path in files:
-        with open(path, "rb") as f:
-            content = f.read()
+    for file_path in files:
+        content = open(file_path, 'rb').read()
         try:
-            existing = repo.get_contents(path, ref=BRANCH)
-            repo.update_file(path, message, content, existing.sha, branch=BRANCH)
+            existing = repo.get_contents(file_path, ref=BRANCH)
+            repo.update_file(file_path, message, content, existing.sha, branch=BRANCH)
         except Exception:
-            repo.create_file(path, message, content, branch=BRANCH)
+            repo.create_file(file_path, message, content, branch=BRANCH)
 
 
 def main():
@@ -95,29 +102,39 @@ def main():
     new_state = {}
     to_commit = []
 
-    for anexo in ANNEX_PAGES:
-        url = f"{STATIC_BASE_URL}/COSING_Annex_{anexo}_v2.xlsx"
-        # También intentar la extensión .xls si no existe .xlsx
-        internal_date = fetch_and_parse_date(url)
-        if not internal_date:
-            # Prueba .xls si .xlsx no funcionó
-            url_xls = url[:-1]  # reemplaza xlsx -> xls
-            internal_date = fetch_and_parse_date(url_xls)
-            url = url_xls
+    for annex in ANNEX_PAGES:
+        urls = [
+            f"{STATIC_BASE_URL}/COSING_Annex_{annex}_v2.xlsx",
+            f"{STATIC_BASE_URL}/COSING_Annex_{annex}_v2.xls"
+        ]
+        internal_date = None
+        chosen_url = None
+        for url in urls:
+            date = fetch_and_parse_date(url)
+            if date:
+                internal_date = date
+                chosen_url = url
+                break
 
         if not internal_date:
-            print(f"[WARN] No pude leer la fecha en Annex {anexo}")
-            new_state[anexo] = state.get(anexo)
+            print(f"[WARN] No pude leer la fecha en Annex {annex}")
+            new_state[annex] = state.get(annex)
             continue
 
-        new_state[anexo] = internal_date
-        if state.get(anexo) != internal_date:
-            print(f"[CHANGE] Annex {anexo}: {state.get(anexo)} -> {internal_date}")
-            # Descargar y guardar el fichero correcto
-            filename = f"COSING_Annex_{anexo}_v2{'.xls' if url.lower().endswith('.xls') else '.xlsx'}"
+        new_state[annex] = internal_date
+        if state.get(annex) != internal_date:
+            print(f"[CHANGE] Annex {annex}: {state.get(annex)} -> {internal_date}")
+            ext = '.xls' if chosen_url.endswith('.xls') else '.xlsx'
+            filename = f"COSING_Annex_{annex}_v2{ext}"
             dest = os.path.join(OUTPUT_DIR, filename)
-            download_file(url, dest)
-            to_commit.append(dest)
+            download_file(chosen_url, dest)
+
+            # Si .xls, convertir
+            if ext == '.xls':
+                converted = convert_xls_to_xlsx(dest)
+                to_commit.append(converted)
+            else:
+                to_commit.append(dest)
 
     save_state(new_state)
 
@@ -128,5 +145,5 @@ def main():
         print("✅ Sin cambios detectados.")
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
