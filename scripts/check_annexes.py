@@ -1,0 +1,89 @@
+#!/usr/bin/env python3
+import requests, json, os
+from bs4 import BeautifulSoup
+from datetime import datetime
+from github import Github  # pip install PyGithub
+
+# ——— CONFIGURACIÓN ———
+BASE_URL       = "https://ec.europa.eu/growth/tools-databases/cosing/reference/annexes"
+ANNEX_PAGES    = ["I","II","III","IV","V","VI"]
+STATE_FILE     = "annexes_state.json"
+GITHUB_TOKEN   = os.environ["GITHUB_TOKEN"]
+REPO_NAME      = "Maxi199588/cosmetic-checker"    # e.g. "miuser/cosing-monitor"
+BRANCH         = "main"
+
+def load_state():
+    if os.path.exists(STATE_FILE):
+        return json.load(open(STATE_FILE))
+    return {}
+
+def save_state(state):
+    with open(STATE_FILE, "w") as f:
+        json.dump(state, f, indent=2)
+
+def head_last_modified(url):
+    r = requests.head(url, allow_redirects=True, timeout=10)
+    r.raise_for_status()
+    return r.headers.get("Last-Modified") or r.headers.get("ETag")
+
+def download(url, dest):
+    r = requests.get(url, timeout=20)
+    r.raise_for_status()
+    with open(dest, "wb") as f:
+        f.write(r.content)
+
+def commit_and_push(files, message):
+    gh   = Github(GITHUB_TOKEN)
+    repo = gh.get_repo(REPO_NAME)
+    # Para cada fichero: crea o actualiza
+    for path in files:
+        with open(path, "rb") as f:
+            content = f.read()
+        try:
+            # intenta actualizar si existe
+            existing = repo.get_contents(path, ref=BRANCH)
+            repo.update_file(path, message, content, existing.sha, branch=BRANCH)
+        except:
+            # si no existe, lo crea
+            repo.create_file(path, message, content, branch=BRANCH)
+
+def main():
+    state     = load_state()
+    new_state = {}
+    to_commit = []
+
+    for anexo in ANNEX_PAGES:
+        page_url = f"{BASE_URL}/list/{anexo}"
+        # 1) scrapeamos el botón XLS
+        r = requests.get(page_url, timeout=10)
+        r.raise_for_status()
+        soup = BeautifulSoup(r.text, "html.parser")
+        a = soup.find("a", href=lambda u: u and u.lower().endswith((".xls", ".xlsx")))
+        if not a:
+            print(f"[WARN] No encontré enlace XLS en Annex {anexo}")
+            continue
+
+        href = a["href"]
+        if href.startswith("/"):
+            href = "https://ec.europa.eu" + href
+
+        lm = head_last_modified(href)
+        new_state[anexo] = lm
+
+        if state.get(anexo) != lm:
+            print(f"[CHANGE] Annex {anexo} -> {lm}")
+            filename = f"COSING_Annex_{anexo}.xlsx"
+            download(href, filename)
+            to_commit.append(filename)
+
+    # guardamos el nuevo estado
+    save_state(new_state)
+
+    # si hay cambios, los committeamos
+    if to_commit:
+        commit_and_push(to_commit, "🔄 Actualización automática Anexos COSING")
+    else:
+        print("✅ Sin cambios detectados.")
+
+if __name__ == "__main__":
+    main()
