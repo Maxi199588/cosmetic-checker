@@ -38,7 +38,7 @@ def save_state(state):
 
 def fetch_and_parse_date(url):
     """
-    Descarga el XLS (.xls o .xlsx) desde la URL y extrae la fecha combinada en la celda A3.
+    Descarga el XLS (.xls o .xlsx) desde la URL y extrae la fecha combinada en las celdas A3 o A4.
     Devuelve la fecha 'DD/MM/YYYY' o None.
     """
     resp = requests.get(url, timeout=30)
@@ -46,30 +46,40 @@ def fetch_and_parse_date(url):
     content = resp.content
 
     cell_value = None
-    # Si es .xlsx, prueba con openpyxl
+    # Intentar .xlsx con openpyxl
     if url.lower().endswith('.xlsx'):
         try:
             wb = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
             ws = wb.active
-            cell_value = ws.cell(row=3, column=1).value
+            # Celdas A3 y A4
+            for row in (3, 4):
+                val = ws.cell(row=row, column=1).value
+                if isinstance(val, str) and DATE_PATTERN.search(val):
+                    cell_value = val
+                    break
         except Exception:
             cell_value = None
-    # Si no funcionó o url .xls, usa xlrd
+    # Intentar .xls con xlrd si no se obtuvo
     if cell_value is None:
         try:
             book = xlrd.open_workbook(file_contents=content)
             sheet = book.sheet_by_index(0)
-            cell_value = sheet.cell_value(2, 0)
+            # Filas 3 (idx2) y 4 (idx3)
+            for idx in (2, 3):
+                val = sheet.cell_value(idx, 0)
+                if isinstance(val, str) and DATE_PATTERN.search(val):
+                    cell_value = val
+                    break
         except Exception:
             cell_value = None
 
     if not isinstance(cell_value, str):
         return None
-    match = DATE_PATTERN.search(cell_value)
-    return match.group(1) if match else None
+    m = DATE_PATTERN.search(cell_value)
+    return m.group(1) if m else None
 
 
-def download_file(url, dest_path):
+def download_file(url, dest_path):(url, dest_path):
     resp = requests.get(url, timeout=30)
     resp.raise_for_status()
     os.makedirs(os.path.dirname(dest_path), exist_ok=True)
