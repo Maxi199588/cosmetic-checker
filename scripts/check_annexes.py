@@ -18,9 +18,11 @@ REPO_NAME = "Maxi199588/cosmetic-checker"
 BRANCH = "main"
 OUTPUT_DIR = "RESTRICCIONES"
 
-# Configuración para notificaciones por GitHub Issues
-NOTIFICATION_BY_ISSUE = True  # Habilitar/deshabilitar notificaciones por issues
-ISSUE_LABEL = "cosing-update"  # Etiqueta para los issues creados
+# Configuración de Smartsheet
+SMARTSHEET_TOKEN = "3VcjriNrxtWU2psT9rY6b8ospMR7URgzJGWiC"
+SMARTSHEET_SHEET_ID = "1835353259331460"
+SMARTSHEET_COLUMN_ID = "1459699263950724"
+SMARTSHEET_API_URL = "https://api.smartsheet.com/2.0"
 
 # Patrón para extraer fecha "DD/MM/YYYY"
 DATE_PATTERNS = [
@@ -273,79 +275,81 @@ def commit_files_with_github_api(files, message):
             return False
 
 
-def create_github_issue(updated_annexes, unchanged_annexes):
-    """Crea un issue en GitHub con la información de actualización."""
-    if not GITHUB_TOKEN:
-        print("⚠️ No se ha proporcionado GITHUB_TOKEN. No se creará el issue.")
-        return False
+def add_row_to_smartsheet(updated_annexes, unchanged_annexes):
+    """
+    Añade una fila a Smartsheet con información sobre las actualizaciones.
     
-    if not NOTIFICATION_BY_ISSUE:
-        print("Notificaciones por issue deshabilitadas")
+    Args:
+        updated_annexes: Lista de anexos que se actualizaron
+        unchanged_annexes: Lista de anexos que no se actualizaron
+    
+    Returns:
+        bool: True si se añadió la fila correctamente, False en caso contrario
+    """
+    if not SMARTSHEET_TOKEN or not SMARTSHEET_SHEET_ID or not SMARTSHEET_COLUMN_ID:
+        print("⚠️ No se ha proporcionado la configuración de Smartsheet.")
         return False
     
     try:
-        print("Preparando creación de issue en GitHub...")
-        gh = Github(GITHUB_TOKEN)
-        repo = gh.get_repo(REPO_NAME)
+        print("Preparando actualización en Smartsheet...")
         
-        # Crear título para el issue
-        if updated_annexes:
-            title = f"🔄 Actualización de Anexos COSING: {', '.join(['Annex ' + a for a in updated_annexes])}"
-        else:
-            title = "📊 Verificación de Anexos COSING - Sin cambios"
-        
-        # Crear cuerpo del issue
-        body = f"## Reporte de Actualización de Anexos COSING\n"
-        body += f"Fecha: {time.strftime('%d/%m/%Y %H:%M:%S')}\n\n"
+        # Preparar el contenido de la celda
+        cell_value = f"Reporte de Actualización COSING - {time.strftime('%d/%m/%Y %H:%M:%S')}\n\n"
         
         if updated_annexes:
-            body += "### Anexos Actualizados:\n"
+            cell_value += "✅ Anexos Actualizados:\n"
             for annex in updated_annexes:
-                body += f"- **Annex {annex}**\n"
-                
-            # Añadir enlaces a los archivos actualizados
-            body += "\n### Archivos actualizados:\n"
-            for annex in updated_annexes:
-                body += f"- [COSING_Annex_{annex}_v2.xlsx](https://github.com/{REPO_NAME}/blob/main/{OUTPUT_DIR}/COSING_Annex_{annex}_v2.xlsx)\n"
-                body += f"- [COSING_Annex_{annex}_v2.xls](https://github.com/{REPO_NAME}/blob/main/{OUTPUT_DIR}/COSING_Annex_{annex}_v2.xls)\n"
+                cell_value += f"- Annex {annex}\n"
         else:
-            body += "**No se encontraron actualizaciones en ningún anexo.**\n"
+            cell_value += "ℹ️ No se encontraron actualizaciones en ningún anexo.\n"
         
         if unchanged_annexes:
-            body += "\n### Anexos sin cambios:\n"
+            cell_value += "\n🔄 Anexos sin cambios:\n"
             for annex in unchanged_annexes:
-                body += f"- Annex {annex}\n"
+                cell_value += f"- Annex {annex}\n"
         
-        # Añadir pie con información adicional
-        body += "\n---\n"
-        body += "*Este issue fue generado automáticamente por el sistema de monitoreo COSING.*\n"
-        body += f"*Último chequeo: {time.strftime('%Y-%m-%d %H:%M:%S')}*"
+        # Preparar la solicitud a la API de Smartsheet
+        headers = {
+            "Authorization": f"Bearer {SMARTSHEET_TOKEN}",
+            "Content-Type": "application/json"
+        }
         
-        # Preparar etiquetas
-        labels = []
-        if ISSUE_LABEL:
-            # Verificar si la etiqueta existe, si no, crearla
-            try:
-                repo.get_label(ISSUE_LABEL)
-                labels.append(ISSUE_LABEL)
-            except:
-                try:
-                    repo.create_label(name=ISSUE_LABEL, color="4CAF50")
-                    labels.append(ISSUE_LABEL)
-                except:
-                    print(f"No se pudo crear la etiqueta {ISSUE_LABEL}")
+        # 1. Primero obtenemos información sobre la hoja
+        sheet_info_url = f"{SMARTSHEET_API_URL}/sheets/{SMARTSHEET_SHEET_ID}"
+        sheet_response = requests.get(sheet_info_url, headers=headers)
         
-        # Crear el issue
-        issue = repo.create_issue(
-            title=title,
-            body=body,
-            labels=labels
+        if sheet_response.status_code != 200:
+            print(f"❌ Error al obtener información de la hoja: {sheet_response.status_code} - {sheet_response.text}")
+            return False
+        
+        # 2. Ahora añadimos una nueva fila
+        add_row_url = f"{SMARTSHEET_API_URL}/sheets/{SMARTSHEET_SHEET_ID}/rows"
+        
+        row_data = {
+            "cells": [
+                {
+                    "columnId": SMARTSHEET_COLUMN_ID,
+                    "value": cell_value
+                }
+            ],
+            "toTop": True  # Añadir al principio de la hoja
+        }
+        
+        add_row_response = requests.post(
+            add_row_url,
+            headers=headers,
+            json=row_data
         )
-        print(f"✅ Issue creado: {issue.html_url}")
-        return True
+        
+        if add_row_response.status_code in (200, 201):
+            print(f"✅ Fila añadida correctamente a Smartsheet")
+            return True
+        else:
+            print(f"❌ Error al añadir fila a Smartsheet: {add_row_response.status_code} - {add_row_response.text}")
+            return False
     
     except Exception as e:
-        print(f"❌ Error al crear issue en GitHub: {e}")
+        print(f"❌ Error general al actualizar Smartsheet: {e}")
         return False
 
 
@@ -405,9 +409,9 @@ def main():
     else:
         print("✅ Sin cambios detectados.")
     
-    # Crear issue en GitHub si hay actualizaciones o hubo errores
+    # Añadir fila a Smartsheet si hay actualizaciones o hubo errores
     if updated_annexes or not commit_success:
-        create_github_issue(updated_annexes, unchanged_annexes)
+        add_row_to_smartsheet(updated_annexes, unchanged_annexes)
 
 
 if __name__ == '__main__':
