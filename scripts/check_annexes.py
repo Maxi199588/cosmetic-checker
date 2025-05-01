@@ -69,7 +69,7 @@ def fetch_and_parse_date(url):
     return m.group(1) if m else None
 
 
-def download_file(url, dest_path):(url, dest_path):
+def download_file(url, dest_path):
     r = requests.get(url, timeout=30)
     r.raise_for_status()
     os.makedirs(os.path.dirname(dest_path), exist_ok=True)
