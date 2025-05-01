@@ -1,0 +1,42 @@
+name: Monitor COSING Annexes
+
+on:
+  # se ejecuta diario a las 09:00 UTC
+  schedule:
+    - cron:  '0 9 * * *'
+  # y también manualmente desde la pestaña Actions
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Install dependencies
+        run: |
+          pip install requests beautifulsoup4 PyGithub
+
+      - name: Run monitor script
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python scripts/check_annexes.py
+
+      - name: Commit & Push if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if [[ -n $(git status --porcelain) ]]; then
+            git add .
+            git commit -m "🔄 Auto-update COSING Anexos"
+            git push
+          else
+            echo "🤖 No hay cambios."
+          fi
