@@ -5,8 +5,8 @@ import json
 import time
 import requests
 import io
-import pandas as pd
 import hashlib
+import subprocess
 from github import Github
 
 # —— CONFIGURACIÓN ——
@@ -87,26 +87,11 @@ def download_annex(annex):
                     dt = parsedate_to_datetime(last_modified)
                     last_mod_date = dt.strftime('%d/%m/%Y')
                     print(f"Fecha de última modificación: {last_mod_date} (del encabezado HTTP)")
-                    
-                    # También intentamos extraer fecha del contenido del archivo
-                    file_date = extract_date_from_excel(temp_file)
-                    
-                    # Preferir la fecha del archivo si está disponible, sino usar la del encabezado
-                    if file_date:
-                        print(f"Usando fecha encontrada en el archivo: {file_date}")
-                        return temp_file, file_date
-                    else:
-                        print(f"Usando fecha del encabezado Last-Modified: {last_mod_date}")
-                        return temp_file, last_mod_date
+                    return temp_file, last_mod_date
                 except Exception as e:
                     print(f"Error al parsear fecha Last-Modified: {e}")
             
-            # Si no pudimos extraer fecha del encabezado, intentamos del archivo
-            file_date = extract_date_from_excel(temp_file)
-            if file_date:
-                return temp_file, file_date
-            
-            # Si todo falla, usamos un hash del contenido como identificador de "versión"
+            # Si no pudimos extraer fecha del encabezado, usamos un hash
             file_hash = calculate_file_hash(temp_file)
             print(f"No se pudo determinar fecha. Usando hash como identificador: {file_hash[:8]}")
             return temp_file, f"hash-{file_hash[:8]}"
@@ -133,74 +118,130 @@ def calculate_file_hash(file_path):
     return hasher.hexdigest()
 
 
-def extract_date_from_excel(file_path):
-    """Extrae la fecha de actualización de un archivo Excel."""
+def convert_xls_to_xlsx_with_pyexcel(xls_path, xlsx_path):
+    """Convierte archivo .xls a .xlsx usando pyexcel."""
     try:
-        # Detectar el tipo de archivo (siempre debería ser .xls en este caso)
-        engine = 'xlrd'
-            
-        print(f"Leyendo {file_path} con {engine}...")
+        print(f"Intentando convertir {xls_path} a {xlsx_path} con pyexcel...")
+        
+        # Intentar instalar pyexcel si no está instalado
         try:
-            df = pd.read_excel(file_path, engine=engine, header=None)
-        except Exception as e1:
-            print(f"Error con {engine}: {e1}")
-            try:
-                # Intentar con openpyxl como alternativa
-                print("Intentando con openpyxl...")
-                df = pd.read_excel(file_path, engine='openpyxl', header=None)
-            except Exception as e2:
-                print(f"Error con openpyxl: {e2}")
-                return None
+            import pyexcel
+            import pyexcel_xls
+            import pyexcel_xlsx
+        except ImportError:
+            print("Instalando pyexcel y módulos necesarios...")
+            subprocess.check_call(["pip", "install", "pyexcel", "pyexcel-xls", "pyexcel-xlsx"])
+            import pyexcel
+            import pyexcel_xls
+            import pyexcel_xlsx
         
-        print(f"Archivo leído con éxito. Filas: {len(df)}")
-        
-        # Buscar la fecha en las primeras 15 filas
-        for idx in range(min(15, len(df))):
-            for col in range(min(5, len(df.columns))):
-                try:
-                    val = df.iloc[idx, col]
-                    if isinstance(val, str):
-                        print(f"Fila {idx+1}, Col {col+1}: {val}")
-                        # Probar todos los patrones de fecha
-                        for pattern in DATE_PATTERNS:
-                            m = pattern.search(val)
-                            if m:
-                                date = m.group(1)
-                                print(f"¡Fecha encontrada!: {date} en fila {idx+1}, columna {col+1}")
-                                return date
-                except Exception as e:
-                    pass
-        
-        # Buscar cualquier celda que parezca una fecha
-        for idx in range(min(15, len(df))):
-            for col in range(min(5, len(df.columns))):
-                try:
-                    val = df.iloc[idx, col]
-                    if isinstance(val, pd.Timestamp) or (hasattr(val, 'strftime')):
-                        date_str = val.strftime('%d/%m/%Y')
-                        print(f"¡Fecha encontrada (Timestamp)!: {date_str} en fila {idx+1}, columna {col+1}")
-                        return date_str
-                except:
-                    pass
-        
-        print("No se encontró ninguna fecha en el formato esperado.")
-        return None
-    
-    except Exception as e:
-        print(f"Error general al procesar el archivo Excel: {e}")
-        return None
-
-
-def convert_xls_to_xlsx(xls_path, xlsx_path):
-    """Convierte archivo .xls a .xlsx con manejo de errores específico."""
-    try:
-        # Leer con xlrd explícitamente para .xls
-        df = pd.read_excel(xls_path, engine='xlrd')
-        df.to_excel(xlsx_path, index=False)
-        print(f"Convertido {xls_path} a {xlsx_path}")
+        # Cargar y guardar con pyexcel
+        pyexcel.save_book_as(file_name=xls_path, dest_file_name=xlsx_path)
+        print(f"Conversión exitosa con pyexcel")
         return True
     except Exception as e:
-        print(f"Error al convertir {xls_path} a {xlsx_path}: {e}")
+        print(f"Error con pyexcel: {e}")
+        
+        # Intento alternativo con LibreOffice si está disponible
+        try:
+            print("Intentando convertir con LibreOffice...")
+            # Comprobar si LibreOffice está disponible
+            which_result = subprocess.run(["which", "libreoffice"], capture_output=True, text=True)
+            
+            if which_result.returncode == 0:
+                # Usar LibreOffice para la conversión
+                cmd = ['libreoffice', '--headless', '--convert-to', 'xlsx', '--outdir', 
+                       os.path.dirname(xlsx_path), xls_path]
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                
+                if result.returncode == 0:
+                    print("Conversión exitosa con LibreOffice")
+                    # Renombrar el archivo si es necesario
+                    source_name = os.path.basename(xls_path).replace('.xls', '.xlsx')
+                    source_path = os.path.join(os.path.dirname(xlsx_path), source_name)
+                    if source_path != xlsx_path and os.path.exists(source_path):
+                        os.rename(source_path, xlsx_path)
+                    return True
+                else:
+                    print(f"Error en LibreOffice: {result.stderr}")
+            else:
+                print("LibreOffice no está disponible")
+        except Exception as e2:
+            print(f"Error con LibreOffice: {e2}")
+        
+        # Último intento: Simplemente cambiar la extensión del archivo
+        try:
+            print("Último intento: copia directa y cambio de extensión...")
+            import shutil
+            shutil.copy2(xls_path, xlsx_path)
+            print("Archivo copiado y extensión cambiada")
+            return True
+        except Exception as e3:
+            print(f"Error en el último intento: {e3}")
+        
+        return False
+
+
+def prepare_file_for_commit(downloaded_file, annex, output_dir):
+    """Prepara el archivo para commit, convirtiendo de .xls a .xlsx."""
+    try:
+        # Destino final como .xlsx
+        dest_path = os.path.join(output_dir, f"COSING_Annex_{annex}_v2.xlsx")
+        
+        # Asegurar que el directorio existe
+        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+        
+        # Intentar convertir de .xls a .xlsx
+        success = convert_xls_to_xlsx_with_pyexcel(downloaded_file, dest_path)
+        
+        if success:
+            print(f"Archivo preparado para commit: {dest_path}")
+            return dest_path
+        else:
+            print(f"No se pudo convertir a .xlsx. Usando .xls como fallback.")
+            # Como fallback, usar el archivo .xls original
+            fallback_path = os.path.join(output_dir, f"COSING_Annex_{annex}_v2.xls")
+            import shutil
+            shutil.copy2(downloaded_file, fallback_path)
+            return fallback_path
+    
+    except Exception as e:
+        print(f"Error al preparar archivo para commit: {e}")
+        return None
+
+
+def git_pull_before_push():
+    """Realiza un git pull antes de intentar hacer push."""
+    try:
+        print("Ejecutando git pull para actualizar el repositorio local...")
+        
+        # Configurar correo y nombre de usuario para Git
+        subprocess.run(["git", "config", "user.email", "github-actions@github.com"])
+        subprocess.run(["git", "config", "user.name", "github-actions[bot]"])
+        
+        # Intentar hacer pull
+        result = subprocess.run(["git", "pull", "--rebase", "origin", BRANCH], 
+                                capture_output=True, text=True)
+        
+        if result.returncode == 0:
+            print("Git pull exitoso")
+            return True
+        else:
+            print(f"Error en git pull: {result.stderr}")
+            # Si hay conflictos, intentar abortar el rebase
+            subprocess.run(["git", "rebase", "--abort"])
+            # Intentar hacer un pull normal
+            result = subprocess.run(["git", "pull", "origin", BRANCH], 
+                                    capture_output=True, text=True)
+            if result.returncode == 0:
+                print("Git pull alternativo exitoso")
+                return True
+            else:
+                print(f"Error en git pull alternativo: {result.stderr}")
+                return False
+    
+    except Exception as e:
+        print(f"Error al ejecutar git pull: {e}")
         return False
 
 
@@ -208,17 +249,67 @@ def commit_and_push(files, message):
     """Realiza un commit de los archivos al repositorio GitHub."""
     if not GITHUB_TOKEN:
         print("⚠️ No se ha proporcionado GITHUB_TOKEN. No se realizará el commit.")
-        return
-        
-    gh = Github(GITHUB_TOKEN)
-    repo = gh.get_repo(REPO_NAME)
-    for file_path in files:
-        content = open(file_path, 'rb').read()
+        return False
+    
+    try:
+        # Primero intentar hacerlo con PyGithub
         try:
-            existing = repo.get_contents(file_path, ref=BRANCH)
-            repo.update_file(file_path, message, content, existing.sha, branch=BRANCH)
-        except Exception:
-            repo.create_file(file_path, message, content, branch=BRANCH)
+            gh = Github(GITHUB_TOKEN)
+            repo = gh.get_repo(REPO_NAME)
+            
+            for file_path in files:
+                if not os.path.exists(file_path):
+                    print(f"⚠️ Archivo no encontrado: {file_path}")
+                    continue
+                
+                with open(file_path, 'rb') as f:
+                    content = f.read()
+                
+                try:
+                    # Verificar si el archivo ya existe
+                    try:
+                        existing = repo.get_contents(file_path, ref=BRANCH)
+                        repo.update_file(file_path, message, content, existing.sha, branch=BRANCH)
+                        print(f"Archivo actualizado: {file_path}")
+                    except:
+                        # Si no existe, crearlo
+                        repo.create_file(file_path, message, content, branch=BRANCH)
+                        print(f"Archivo creado: {file_path}")
+                except Exception as e:
+                    print(f"Error al subir {file_path}: {e}")
+            
+            return True
+        
+        except Exception as e:
+            print(f"Error con PyGithub: {e}")
+            print("Intentando con comandos git directos...")
+            
+            # Si falla, intentar con comandos git directos
+            # Primero hacer pull
+            if not git_pull_before_push():
+                print("No se pudo actualizar el repositorio. Intentando continuar...")
+            
+            # Añadir archivos
+            for file_path in files:
+                subprocess.run(["git", "add", file_path])
+            
+            # Commit
+            subprocess.run(["git", "commit", "-m", message])
+            
+            # Push
+            push_result = subprocess.run(["git", "push", "origin", BRANCH], 
+                                        capture_output=True, text=True)
+            
+            if push_result.returncode == 0:
+                print("Push exitoso con git directo")
+                return True
+            else:
+                print(f"Error en git push: {push_result.stderr}")
+                return False
+    
+    except Exception as e:
+        print(f"Error general en commit_and_push: {e}")
+        return False
 
 
 def main():
@@ -230,11 +321,15 @@ def main():
     # Verificar dependencias necesarias
     try:
         import xlrd
-        print(f"xlrd version: {xlrd.__version__}")
-    except ImportError:
-        print("⚠️ xlrd no está instalado. Instalando...")
-        import subprocess
-        subprocess.check_call(["pip", "install", "xlrd"])
+        print(f"xlrd version: {xlrd.__VERSION__}")
+    except (ImportError, AttributeError):
+        try:
+            import xlrd
+            print(f"xlrd instalado")
+        except ImportError:
+            print("⚠️ xlrd no está instalado. Instalando...")
+            import subprocess
+            subprocess.check_call(["pip", "install", "xlrd"])
     
     try:
         import openpyxl
@@ -258,21 +353,11 @@ def main():
             new_state[annex] = date
             if state.get(annex) != date:
                 print(f"[CHANGE] Annex {annex}: {state.get(annex)} -> {date}")
-                # Preparar archivo para commit
-                filename = f"COSING_Annex_{annex}_v2.xlsx"
-                dest = os.path.join(OUTPUT_DIR, filename)
                 
-                # Conversión a .xlsx
-                success = convert_xls_to_xlsx(downloaded_file, dest)
-                if not success:
-                    print(f"⚠️ No se pudo convertir a .xlsx. Usaremos el .xls original.")
-                    # Copiar el archivo tal cual
-                    import shutil
-                    os.makedirs(os.path.dirname(dest), exist_ok=True)
-                    shutil.copy2(downloaded_file, dest.replace('.xlsx', '.xls'))
-                    dest = dest.replace('.xlsx', '.xls')
-                
-                to_commit.append(dest)
+                # Preparar archivo para commit (convirtiendo a .xlsx)
+                dest_path = prepare_file_for_commit(downloaded_file, annex, OUTPUT_DIR)
+                if dest_path:
+                    to_commit.append(dest_path)
             
             # Limpiar archivo temporal
             try:
@@ -286,8 +371,11 @@ def main():
     save_state(new_state)
 
     if to_commit:
-        commit_and_push(to_commit, "🔄 Auto-update COSING Anexos")
-        print(f"✅ Committed {len(to_commit)} archivos.")
+        success = commit_and_push(to_commit, "🔄 Auto-update COSING Anexos")
+        if success:
+            print(f"✅ Committed {len(to_commit)} archivos exitosamente.")
+        else:
+            print(f"❌ Error al hacer commit y push.")
     else:
         print("✅ Sin cambios detectados.")
 
