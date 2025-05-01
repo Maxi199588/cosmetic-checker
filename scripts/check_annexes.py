@@ -67,14 +67,14 @@ def main():
         r.raise_for_status()
         soup = BeautifulSoup(r.text, "html.parser")
 
-        # Buscar enlace XLS por href terminando en .xls o .xlsx
-        a_xls = soup.find("a", href=re.compile(r"\.xls[x]?$", re.IGNORECASE))
+        # Buscar enlace XLS por href conteniendo '.xls'
+        a_xls = soup.find("a", href=re.compile(r"\.xls", re.IGNORECASE))
         if not a_xls:
             print(f"[WARN] No encontré enlace XLS en Annex {anexo}")
             new_state[anexo] = state.get(anexo)
             continue
 
-        href = a_xls["href"]
+        href = a_xls.get("href")
         if href.startswith("/"):
             href = "https://ec.europa.eu" + href
 
