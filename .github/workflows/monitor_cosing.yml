@@ -27,7 +27,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install requests beautifulsoup4 PyGithub openpyxl
+          pip install requests beautifulsoup4 PyGithub openpyxl xlrd
 
       - name: Run monitor script
         env:
