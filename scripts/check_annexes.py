@@ -2,17 +2,16 @@
 import requests
 import json
 import os
-import re
-from bs4 import BeautifulSoup
 from github import Github  # pip install PyGithub
 
 # —— CONFIGURACIÓN ——
-BASE_URL       = "https://ec.europa.eu/growth/tools-databases/cosing/reference/annexes"
-ANNEX_PAGES    = ["I","II","III","IV","V","VI"]
-STATE_FILE     = "annexes_state.json"
-GITHUB_TOKEN   = os.environ.get("GITHUB_TOKEN")
-REPO_NAME      = "Maxi199588/cosmetic-checker"  # Ajusta a tu usuario/repo
-BRANCH         = "main"
+# Prefijo de la URL donde están los XLS de los anexos
+STATIC_BASE_URL = "https://ec.europa.eu/growth/tools-databases/cosing/assets/data"
+ANNEX_PAGES     = ["II", "III", "IV", "V", "VI"]  # I no tiene XLS
+STATE_FILE      = "annexes_state.json"
+GITHUB_TOKEN    = os.environ.get("GITHUB_TOKEN")
+REPO_NAME       = "Maxi199588/cosmetic-checker"  # Ajusta a tu usuario/repo
+BRANCH          = "main"
 
 
 def load_state():
@@ -33,11 +32,12 @@ def save_state(state):
 def head_last_modified(url):
     r = requests.head(url, allow_redirects=True, timeout=10)
     r.raise_for_status()
+    # Usa Last-Modified o ETag como sello
     return r.headers.get("Last-Modified") or r.headers.get("ETag")
 
 
 def download(url, dest):
-    r = requests.get(url, timeout=20)
+    r = requests.get(url, timeout=30)
     r.raise_for_status()
     with open(dest, "wb") as f:
         f.write(r.content)
@@ -62,33 +62,22 @@ def main():
     to_commit = []
 
     for anexo in ANNEX_PAGES:
-        page_url = f"{BASE_URL}/list/{anexo}"
-        r = requests.get(page_url, timeout=10)
-        r.raise_for_status()
-        soup = BeautifulSoup(r.text, "html.parser")
-
-        # Buscar enlace XLS por href conteniendo '.xls'
-        a_xls = soup.find("a", href=re.compile(r"\.xls", re.IGNORECASE))
-        if not a_xls:
-            print(f"[WARN] No encontré enlace XLS en Annex {anexo}")
-            new_state[anexo] = state.get(anexo)
-            continue
-
-        href = a_xls.get("href")
-        if href.startswith("/"):
-            href = "https://ec.europa.eu" + href
-
+        # Construye la URL estática del XLS (versión 2)
+        href = f"{STATIC_BASE_URL}/COSING_Annex_{anexo}_v2.xlsx"
         lm = head_last_modified(href)
         new_state[anexo] = lm
 
+        # Si cambió, descargamos
         if state.get(anexo) != lm:
             print(f"[CHANGE] Annex {anexo}: {state.get(anexo)} -> {lm}")
-            filename = f"COSING_Annex_{anexo}.xlsx"
+            filename = os.path.join("RESTRICCIONES", f"COSING_Annex_{anexo}_v2.xlsx")
             download(href, filename)
             to_commit.append(filename)
 
+    # Guardamos estado actualizado
     save_state(new_state)
 
+    # Commit si hay archivos nuevos o actualizados
     if to_commit:
         commit_and_push(to_commit, "🔄 Auto-update COSING Anexos")
     else:
