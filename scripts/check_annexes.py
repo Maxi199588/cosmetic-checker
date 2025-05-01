@@ -6,11 +6,11 @@ import time
 import requests
 import io
 import pandas as pd
+import hashlib
 from github import Github
 
 # —— CONFIGURACIÓN ——
-BASE_URL = "https://ec.europa.eu/growth/tools-databases/cosing"
-API_URL = f"{BASE_URL}/api"
+API_BASE_URL = "https://api.tech.ec.europa.eu/cosing20/1.0/api/annexes"
 ANNEX_PAGES = ["II", "III", "IV", "V", "VI"]
 STATE_FILE = "annexes_state.json"
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
@@ -28,6 +28,7 @@ DATE_PATTERNS = [
 
 
 def load_state():
+    """Carga el estado anterior del archivo STATE_FILE."""
     if os.path.exists(STATE_FILE):
         try:
             with open(STATE_FILE, "r", encoding="utf-8") as f:
@@ -38,312 +39,120 @@ def load_state():
 
 
 def save_state(state):
+    """Guarda el estado actual en el archivo STATE_FILE."""
     with open(STATE_FILE, "w", encoding="utf-8") as f:
         json.dump(state, f, indent=2, ensure_ascii=False)
 
 
-def inspect_content(file_path):
-    """Inspecciona el contenido del archivo para ver qué tipo de archivo es realmente."""
+def download_annex(annex):
+    """Descarga un anexo usando la URL de API directa."""
+    url = f"{API_BASE_URL}/{annex}/export-xls"
+    print(f"\n--- Descargando Annex {annex} ---")
+    print(f"URL: {url}")
+    
     try:
-        with open(file_path, 'rb') as f:
-            header = f.read(20)  # Leer los primeros 20 bytes para inspeccionar
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+            "Accept": "*/*"
+        }
+        
+        response = requests.get(url, headers=headers, stream=True, timeout=60)
+        response.raise_for_status()
+        
+        # Extraer información importante de las cabeceras
+        content_type = response.headers.get('Content-Type', '')
+        content_disp = response.headers.get('Content-Disposition', '')
+        last_modified = response.headers.get('Last-Modified', '')
+        
+        print(f"Respuesta exitosa. Status: {response.status_code}")
+        print(f"Content-Type: {content_type}")
+        print(f"Content-Disposition: {content_disp}")
+        print(f"Last-Modified: {last_modified}")
+        
+        # Verificar que es un archivo Excel
+        if 'application/vnd.ms-excel' in content_type or 'excel' in content_type.lower():
+            # Guardar el archivo
+            temp_file = f"temp_annex_{annex}.xls"
             
-        # Detectar firmas de archivo comunes
-        if header.startswith(b'PK\x03\x04'):
-            print("El archivo parece ser un archivo ZIP/XLSX válido")
-            return "xlsx"
-        elif header.startswith(b'\xD0\xCF\x11\xE0'):
-            print("El archivo parece ser un archivo OLE/XLS válido")
-            return "xls"
-        elif header.startswith(b'<!DOCTYPE') or header.startswith(b'<html'):
-            print("El archivo parece ser HTML, no un Excel")
+            with open(temp_file, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
             
-            # Leer para diagnóstico
-            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                content = f.read(1000)  # Leer hasta 1000 caracteres para diagnóstico
-            print(f"Contenido HTML (primeros 1000 caracteres):\n{content}")
+            print(f"Archivo descargado como {temp_file}")
             
-            return "html"
+            # Extraer fecha de last-modified si está disponible
+            if last_modified:
+                try:
+                    from email.utils import parsedate_to_datetime
+                    dt = parsedate_to_datetime(last_modified)
+                    last_mod_date = dt.strftime('%d/%m/%Y')
+                    print(f"Fecha de última modificación: {last_mod_date} (del encabezado HTTP)")
+                    
+                    # También intentamos extraer fecha del contenido del archivo
+                    file_date = extract_date_from_excel(temp_file)
+                    
+                    # Preferir la fecha del archivo si está disponible, sino usar la del encabezado
+                    if file_date:
+                        print(f"Usando fecha encontrada en el archivo: {file_date}")
+                        return temp_file, file_date
+                    else:
+                        print(f"Usando fecha del encabezado Last-Modified: {last_mod_date}")
+                        return temp_file, last_mod_date
+                except Exception as e:
+                    print(f"Error al parsear fecha Last-Modified: {e}")
+            
+            # Si no pudimos extraer fecha del encabezado, intentamos del archivo
+            file_date = extract_date_from_excel(temp_file)
+            if file_date:
+                return temp_file, file_date
+            
+            # Si todo falla, usamos un hash del contenido como identificador de "versión"
+            file_hash = calculate_file_hash(temp_file)
+            print(f"No se pudo determinar fecha. Usando hash como identificador: {file_hash[:8]}")
+            return temp_file, f"hash-{file_hash[:8]}"
+        
         else:
-            print(f"Tipo de archivo desconocido. Primeros bytes: {header}")
-            return "unknown"
-    except Exception as e:
-        print(f"Error al inspeccionar el archivo: {e}")
-        return "error"
-
-
-def attempt_download_with_session(annex):
-    """Intenta descargar el anexo utilizando una sesión para mantener cookies."""
-    print(f"\n--- Intentando descarga con sesión para Annex {annex} ---")
-    
-    session = requests.Session()
-    
-    # Cabeceras para simular un navegador real
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9",
-        "Accept-Language": "en-US,en;q=0.9,es;q=0.8",
-        "Connection": "keep-alive",
-        "Upgrade-Insecure-Requests": "1",
-        "Cache-Control": "no-cache",
-        "Pragma": "no-cache"
-    }
-    
-    session.headers.update(headers)
-    
-    # 1. Primer visitar la página principal para obtener cookies
-    main_url = f"{BASE_URL}/reference/annexes/list/{annex}"
-    try:
-        print(f"Visitando la página principal: {main_url}")
-        r = session.get(main_url, timeout=30)
-        r.raise_for_status()
-        
-        # 2. Buscar el token CSRF o cualquier otro parámetro necesario
-        csrf_token = None
-        csrf_pattern = re.compile(r'name="csrf_token" value="([^"]+)"')
-        match = csrf_pattern.search(r.text)
-        if match:
-            csrf_token = match.group(1)
-            print(f"Token CSRF encontrado: {csrf_token}")
-        
-        # 3. Intentar diferentes URLs de descarga
-        download_endpoints = [
-            f"{BASE_URL}/reference/annexes/download/{annex}",
-            f"{BASE_URL}/reference/annexes/list/{annex}/download",
-            f"{API_URL}/annex/{annex}/download",
-            f"{API_URL}/annexes/{annex}/download"
-        ]
-        
-        for endpoint in download_endpoints:
-            try:
-                print(f"Intentando descarga desde: {endpoint}")
-                # Si tenemos un token CSRF, lo incluimos en la solicitud
-                if csrf_token:
-                    data = {"csrf_token": csrf_token}
-                    r = session.post(endpoint, data=data, timeout=30, stream=True)
-                else:
-                    r = session.get(endpoint, timeout=30, stream=True)
-                
-                if r.status_code == 200:
-                    content_type = r.headers.get('Content-Type', '')
-                    content_disp = r.headers.get('Content-Disposition', '')
-                    
-                    print(f"Respuesta exitosa. Content-Type: {content_type}")
-                    print(f"Content-Disposition: {content_disp}")
-                    
-                    # Determinar la extensión del archivo por la disposición del contenido
-                    filename = f"temp_annex_{annex}.xlsx"
-                    if 'filename=' in content_disp:
-                        match = re.search(r'filename=(?:"([^"]+)"|([^;]+))', content_disp)
-                        if match:
-                            original_filename = match.group(1) or match.group(2)
-                            print(f"Nombre de archivo original: {original_filename}")
-                            
-                            # Usar la extensión del archivo original si está disponible
-                            if original_filename.lower().endswith('.xls'):
-                                filename = f"temp_annex_{annex}.xls"
-                            elif original_filename.lower().endswith('.xlsx'):
-                                filename = f"temp_annex_{annex}.xlsx"
-                    elif '.xls' in content_type.lower() and '.xlsx' not in content_type.lower():
-                        filename = f"temp_annex_{annex}.xls"
-                    
-                    # Guardar el archivo
-                    with open(filename, 'wb') as f:
-                        for chunk in r.iter_content(chunk_size=8192):
-                            f.write(chunk)
-                    
-                    print(f"Archivo descargado como {filename}")
-                    
-                    # Verificar qué tipo de archivo es realmente
-                    file_type = inspect_content(filename)
-                    
-                    if file_type in ['xlsx', 'xls']:
-                        return filename
-                    else:
-                        print(f"El archivo descargado no es un Excel válido (es {file_type})")
-                        # Renombrar para depuración
-                        debug_file = f"invalid_{annex}_{file_type}.bin"
-                        os.rename(filename, debug_file)
-                        print(f"Archivo renombrado a {debug_file} para depuración")
-            
-            except Exception as e:
-                print(f"Error al intentar {endpoint}: {e}")
-        
-        # 4. Intentar descargar desde URLs directas
-        direct_urls = [
-            f"{BASE_URL}/assets/data/Annex_{annex}_OFFICIAL.xlsx",
-            f"{BASE_URL}/assets/data/Annex_{annex.upper()}_OFFICIAL.xlsx",
-            f"{BASE_URL}/assets/data/Annex_{annex}.xlsx",
-            f"{BASE_URL}/assets/data/Annex_{annex}.xls",
-            f"{BASE_URL}/assets/data/COSING_Annex_{annex}.xlsx",
-            f"{BASE_URL}/assets/data/COSING_Annex_{annex}.xls",
-            f"{BASE_URL}/assets/data/COSING_Annex_{annex}_v2.xlsx",
-            f"{BASE_URL}/assets/data/COSING_Annex_{annex}_v2.xls"
-        ]
-        
-        for direct_url in direct_urls:
-            try:
-                print(f"Intentando URL directa: {direct_url}")
-                r = session.get(direct_url, timeout=30, stream=True)
-                
-                if r.status_code == 200:
-                    filename = f"temp_annex_{annex}.xlsx" if direct_url.endswith('.xlsx') else f"temp_annex_{annex}.xls"
-                    
-                    with open(filename, 'wb') as f:
-                        for chunk in r.iter_content(chunk_size=8192):
-                            f.write(chunk)
-                    
-                    print(f"Archivo descargado como {filename}")
-                    
-                    # Verificar qué tipo de archivo es realmente
-                    file_type = inspect_content(filename)
-                    
-                    if file_type in ['xlsx', 'xls']:
-                        return filename
-                    else:
-                        print(f"El archivo descargado no es un Excel válido (es {file_type})")
-                        # Renombrar para depuración
-                        debug_file = f"invalid_{annex}_{file_type}.bin"
-                        os.rename(filename, debug_file)
-                        print(f"Archivo renombrado a {debug_file} para depuración")
-            
-            except Exception as e:
-                print(f"Error al intentar {direct_url}: {e}")
+            print(f"¡El contenido descargado no es un archivo Excel! Tipo: {content_type}")
+            # Guardar el contenido para diagnóstico
+            with open(f"invalid_content_{annex}.bin", 'wb') as f:
+                f.write(response.content)
+            print(f"Contenido guardado para diagnóstico en invalid_content_{annex}.bin")
+            return None, None
     
     except Exception as e:
-        print(f"Error durante la sesión: {e}")
-    
-    return None
+        print(f"Error al descargar anexo {annex}: {e}")
+        return None, None
 
 
-def download_annex_alternate_formats(annex):
-    """Intenta descargar formatos alternativos del anexo."""
-    print(f"\n--- Probando formatos alternativos para Annex {annex} ---")
-    
-    # Probar con nombres de archivo alternativos y en diferentes subcarpetas
-    alternative_urls = [
-        f"{BASE_URL}/assets/documents/annexes/annex_{annex.lower()}.xlsx",
-        f"{BASE_URL}/assets/documents/annex_{annex.lower()}.xlsx",
-        f"{BASE_URL}/assets/files/annex_{annex}.xlsx",
-        f"{BASE_URL}/docs/annex_{annex}.xlsx",
-        f"{BASE_URL}/documents/annex_{annex}.xlsx",
-        # Versiones en PDF por si acaso
-        f"{BASE_URL}/assets/data/Annex_{annex}.pdf",
-        f"{BASE_URL}/assets/data/COSING_Annex_{annex}.pdf",
-        f"{BASE_URL}/reference/annexes/pdf/{annex}"
-    ]
-    
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-    }
-    
-    for url in alternative_urls:
-        try:
-            print(f"Probando: {url}")
-            r = requests.head(url, headers=headers, timeout=10)
-            
-            if r.status_code == 200:
-                print(f"¡URL exitosa!: {url}")
-                r = requests.get(url, headers=headers, timeout=30, stream=True)
-                
-                # Determinar la extensión basada en la URL
-                ext = url.split('.')[-1].lower() if '.' in url else 'xlsx'
-                filename = f"temp_annex_{annex}.{ext}"
-                
-                with open(filename, 'wb') as f:
-                    for chunk in r.iter_content(chunk_size=8192):
-                        f.write(chunk)
-                
-                print(f"Archivo descargado como {filename}")
-                
-                # Si es un PDF, no podemos extraer la fecha directamente
-                if ext == 'pdf':
-                    print("Archivo PDF descargado. No se puede extraer fecha automáticamente.")
-                    return None
-                
-                # Verificar qué tipo de archivo es realmente
-                file_type = inspect_content(filename)
-                
-                if file_type in ['xlsx', 'xls']:
-                    return filename
-        
-        except Exception as e:
-            print(f"Error al probar {url}: {e}")
-    
-    return None
+def calculate_file_hash(file_path):
+    """Calcula un hash MD5 del contenido del archivo."""
+    hasher = hashlib.md5()
+    with open(file_path, 'rb') as f:
+        buf = f.read()
+        hasher.update(buf)
+    return hasher.hexdigest()
 
 
 def extract_date_from_excel(file_path):
     """Extrae la fecha de actualización de un archivo Excel."""
     try:
-        # Verificar primero qué tipo de archivo es realmente
-        file_type = inspect_content(file_path)
-        
-        if file_type not in ['xlsx', 'xls']:
-            print(f"El archivo no es un Excel válido ({file_type})")
-            return None
-        
-        # Detectar el tipo de archivo por la extensión
-        if file_path.endswith('.xlsx'):
-            engine = 'openpyxl'
-        else:
-            engine = 'xlrd'
+        # Detectar el tipo de archivo (siempre debería ser .xls en este caso)
+        engine = 'xlrd'
             
         print(f"Leyendo {file_path} con {engine}...")
         try:
             df = pd.read_excel(file_path, engine=engine, header=None)
         except Exception as e1:
             print(f"Error con {engine}: {e1}")
-            # Intentar con el otro motor
             try:
-                alternate_engine = 'xlrd' if engine == 'openpyxl' else 'openpyxl'
-                print(f"Intentando con {alternate_engine}...")
-                df = pd.read_excel(file_path, engine=alternate_engine, header=None)
+                # Intentar con openpyxl como alternativa
+                print("Intentando con openpyxl...")
+                df = pd.read_excel(file_path, engine='openpyxl', header=None)
             except Exception as e2:
-                print(f"Error con {alternate_engine}: {e2}")
-                # Último intento con opciones adicionales
-                try:
-                    print("Último intento con opciones adicionales...")
-                    if engine == 'xlrd':
-                        # Para xlrd
-                        import xlrd
-                        xls = xlrd.open_workbook(file_path, logfile=open(os.devnull, 'w'))
-                        sheet = xls.sheet_by_index(0)
-                        # Convertir a dataframe
-                        data = []
-                        for i in range(sheet.nrows):
-                            row = []
-                            for j in range(sheet.ncols):
-                                row.append(sheet.cell_value(i, j))
-                            data.append(row)
-                        df = pd.DataFrame(data)
-                    else:
-                        # Para openpyxl
-                        from openpyxl import load_workbook
-                        wb = load_workbook(file_path, read_only=True, data_only=True)
-                        sheet = wb.active
-                        # Convertir a dataframe
-                        data = []
-                        for row in sheet.rows:
-                            data.append([cell.value for cell in row])
-                        df = pd.DataFrame(data)
-                except Exception as e3:
-                    print(f"Todos los intentos fallaron: {e3}")
-                    return None
+                print(f"Error con openpyxl: {e2}")
+                return None
         
-        print(f"Archivo leído con éxito. Filas: {len(df)}, Columnas: {len(df.columns)}")
-        
-        # Imprimir las primeras filas para diagnóstico
-        print("Primeras filas del archivo:")
-        for i in range(min(10, len(df))):
-            row_values = []
-            for j in range(min(5, len(df.columns))):
-                try:
-                    val = df.iloc[i, j]
-                    row_values.append(str(val)[:50])  # Limitar a 50 caracteres para legibilidad
-                except:
-                    row_values.append("ERROR")
-            print(f"Fila {i+1}: {' | '.join(row_values)}")
+        print(f"Archivo leído con éxito. Filas: {len(df)}")
         
         # Buscar la fecha en las primeras 15 filas
         for idx in range(min(15, len(df))):
@@ -351,6 +160,7 @@ def extract_date_from_excel(file_path):
                 try:
                     val = df.iloc[idx, col]
                     if isinstance(val, str):
+                        print(f"Fila {idx+1}, Col {col+1}: {val}")
                         # Probar todos los patrones de fecha
                         for pattern in DATE_PATTERNS:
                             m = pattern.search(val)
@@ -359,7 +169,7 @@ def extract_date_from_excel(file_path):
                                 print(f"¡Fecha encontrada!: {date} en fila {idx+1}, columna {col+1}")
                                 return date
                 except Exception as e:
-                    print(f"Error al leer celda ({idx}, {col}): {e}")
+                    pass
         
         # Buscar cualquier celda que parezca una fecha
         for idx in range(min(15, len(df))):
@@ -395,6 +205,7 @@ def convert_xls_to_xlsx(xls_path, xlsx_path):
 
 
 def commit_and_push(files, message):
+    """Realiza un commit de los archivos al repositorio GitHub."""
     if not GITHUB_TOKEN:
         print("⚠️ No se ha proporcionado GITHUB_TOKEN. No se realizará el commit.")
         return
@@ -411,6 +222,7 @@ def commit_and_push(files, message):
 
 
 def main():
+    """Función principal del script."""
     state = load_state()
     new_state = {}
     to_commit = []
@@ -426,7 +238,7 @@ def main():
     
     try:
         import openpyxl
-        print(f"openpyxl version: {openpyxl.__VERSION__}" if hasattr(openpyxl, '__VERSION__') else f"openpyxl instalado")
+        print(f"openpyxl instalado")
     except ImportError:
         print("⚠️ openpyxl no está instalado. Instalando...")
         import subprocess
@@ -437,53 +249,36 @@ def main():
         print(f"Procesando ANNEX {annex}")
         print(f"{'='*50}")
         
-        # Intentar descargar con sesión (simulando un navegador)
-        downloaded_file = attempt_download_with_session(annex)
+        # Descargar archivo con la API directa
+        downloaded_file, date = download_annex(annex)
         
-        # Si falla, probar con formatos alternativos
-        if not downloaded_file:
-            downloaded_file = download_annex_alternate_formats(annex)
-        
-        if downloaded_file:
-            # Extraer fecha del archivo
-            date = extract_date_from_excel(downloaded_file)
+        if downloaded_file and date:
+            print(f"Versión identificada: {date}")
             
-            if date:
-                print(f"Fecha encontrada: {date}")
+            new_state[annex] = date
+            if state.get(annex) != date:
+                print(f"[CHANGE] Annex {annex}: {state.get(annex)} -> {date}")
+                # Preparar archivo para commit
+                filename = f"COSING_Annex_{annex}_v2.xlsx"
+                dest = os.path.join(OUTPUT_DIR, filename)
                 
-                new_state[annex] = date
-                if state.get(annex) != date:
-                    print(f"[CHANGE] Annex {annex}: {state.get(annex)} -> {date}")
-                    # Preparar archivo para commit
-                    filename = f"COSING_Annex_{annex}_v2.xlsx"
-                    dest = os.path.join(OUTPUT_DIR, filename)
-                    
-                    if downloaded_file.endswith('.xls'):
-                        # Conversión a .xlsx
-                        success = convert_xls_to_xlsx(downloaded_file, dest)
-                        if not success:
-                            print(f"⚠️ No se pudo convertir a .xlsx. Usaremos el .xls original.")
-                            # Copiar el archivo tal cual
-                            import shutil
-                            os.makedirs(os.path.dirname(dest), exist_ok=True)
-                            shutil.copy2(downloaded_file, dest.replace('.xlsx', '.xls'))
-                            dest = dest.replace('.xlsx', '.xls')
-                    else:
-                        # Copiar el archivo tal cual
-                        import shutil
-                        os.makedirs(os.path.dirname(dest), exist_ok=True)
-                        shutil.copy2(downloaded_file, dest)
-                    
-                    to_commit.append(dest)
+                # Conversión a .xlsx
+                success = convert_xls_to_xlsx(downloaded_file, dest)
+                if not success:
+                    print(f"⚠️ No se pudo convertir a .xlsx. Usaremos el .xls original.")
+                    # Copiar el archivo tal cual
+                    import shutil
+                    os.makedirs(os.path.dirname(dest), exist_ok=True)
+                    shutil.copy2(downloaded_file, dest.replace('.xlsx', '.xls'))
+                    dest = dest.replace('.xlsx', '.xls')
                 
-                # Limpiar archivo temporal
-                try:
-                    os.remove(downloaded_file)
-                except:
-                    pass
-            else:
-                print(f"[WARN] No pude leer la fecha en Annex {annex}")
-                new_state[annex] = state.get(annex)
+                to_commit.append(dest)
+            
+            # Limpiar archivo temporal
+            try:
+                os.remove(downloaded_file)
+            except:
+                pass
         else:
             print(f"[WARN] No pude descargar el archivo para Annex {annex}")
             new_state[annex] = state.get(annex)
