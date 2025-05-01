@@ -1,10 +1,12 @@
 name: Monitor COSING Annexes
 
+# 1) Dale permiso de escritura a los contenidos
+permissions:
+  contents: write
+
 on:
-  # se ejecuta diario a las 09:00 UTC
   schedule:
     - cron:  '0 9 * * *'
-  # y también manualmente desde la pestaña Actions
   workflow_dispatch:
 
 jobs:
@@ -12,8 +14,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 2) Haz checkout persistiendo credenciales (para poder push)
       - name: Checkout repo
         uses: actions/checkout@v3
+        with:
+          persist-credentials: true
 
       - name: Setup Python
         uses: actions/setup-python@v4
@@ -26,6 +31,7 @@ jobs:
 
       - name: Run monitor script
         env:
+          # este token ya viene inyectado automáticamente
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python scripts/check_annexes.py
 
