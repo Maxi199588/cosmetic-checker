@@ -18,6 +18,14 @@ REPO_NAME = "Maxi199588/cosmetic-checker"
 BRANCH = "main"
 OUTPUT_DIR = "RESTRICCIONES"
 
+# Configuración para notificaciones por correo
+EMAIL_ENABLED = True  # Habilitar/deshabilitar notificaciones por correo
+EMAIL_RECIPIENT = "maximiliano.gonzalez@solucionesgxp.com"
+EMAIL_SENDER = os.environ.get("EMAIL_SENDER", "github-actions@github.com")
+EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD")
+SMTP_SERVER = os.environ.get("SMTP_SERVER", "smtp.gmail.com") 
+SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
+
 # Patrón para extraer fecha "DD/MM/YYYY"
 DATE_PATTERNS = [
     re.compile(r"Last update:\s*(\d{2}/\d{2}/\d{4})"),
@@ -269,11 +277,133 @@ def commit_files_with_github_api(files, message):
             return False
 
 
+def send_notification_email(updated_annexes, unchanged_annexes):
+    """
+    Envía un correo electrónico con información sobre las actualizaciones.
+    
+    Args:
+        updated_annexes: Lista de anexos que se actualizaron
+        unchanged_annexes: Lista de anexos que no se actualizaron
+    
+    Returns:
+        bool: True si el correo se envió correctamente, False en caso contrario
+    """
+    if not EMAIL_ENABLED or not EMAIL_PASSWORD:
+        print("Notificaciones por correo deshabilitadas o falta contraseña")
+        return False
+        
+    try:
+        print("Preparando notificación por correo...")
+        
+        # Importar módulos necesarios para el correo
+        try:
+            import smtplib
+            from email.mime.text import MIMEText
+            from email.mime.multipart import MIMEMultipart
+        except ImportError:
+            import subprocess
+            print("Instalando dependencias para envío de correo...")
+            subprocess.check_call(["pip", "install", "secure-smtplib"])
+            import smtplib
+            from email.mime.text import MIMEText
+            from email.mime.multipart import MIMEMultipart
+        
+        # Crear el mensaje
+        msg = MIMEMultipart()
+        msg['From'] = EMAIL_SENDER
+        msg['To'] = EMAIL_RECIPIENT
+        msg['Subject'] = "Actualización de Anexos COSING"
+        
+        # Construir el cuerpo del mensaje
+        body = f"""
+<html>
+<head>
+    <style>
+        body {{ font-family: Arial, sans-serif; }}
+        .header {{ background-color: #4CAF50; color: white; padding: 10px; }}
+        .content {{ padding: 15px; }}
+        .updated {{ color: green; }}
+        .unchanged {{ color: #888; }}
+        .footer {{ font-size: 0.8em; color: #888; padding-top: 20px; }}
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h2>Reporte de Actualización de Anexos COSING</h2>
+        <p>Fecha: {time.strftime('%d/%m/%Y %H:%M:%S')}</p>
+    </div>
+    <div class="content">
+"""
+        
+        # Sección de anexos actualizados
+        if updated_annexes:
+            body += "<h3>Anexos Actualizados:</h3><ul>"
+            for annex in updated_annexes:
+                body += f'<li class="updated">Annex {annex}</li>'
+            body += "</ul>"
+        else:
+            body += "<p>No se encontraron actualizaciones en ningún anexo.</p>"
+        
+        # Sección de anexos sin cambios
+        if unchanged_annexes:
+            body += "<h3>Anexos sin cambios:</h3><ul>"
+            for annex in unchanged_annexes:
+                body += f'<li class="unchanged">Annex {annex}</li>'
+            body += "</ul>"
+        
+        # Cerrar el mensaje
+        body += """
+    </div>
+    <div class="footer">
+        <p>Este es un mensaje automático generado por el sistema de monitoreo COSING.</p>
+    </div>
+</body>
+</html>
+"""
+        
+        # Adjuntar el cuerpo HTML al mensaje
+        msg.attach(MIMEText(body, 'html'))
+        
+        # Conectar al servidor SMTP y enviar el correo
+        try:
+            if SMTP_PORT == 465:
+                # Conexión SSL
+                server = smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT)
+            else:
+                # Conexión estándar con STARTTLS
+                server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
+                server.starttls()
+            
+            # Login con credenciales
+            server.login(EMAIL_SENDER, EMAIL_PASSWORD)
+            
+            # Enviar el correo
+            server.send_message(msg)
+            
+            # Cerrar la conexión
+            server.quit()
+            
+            print(f"✅ Notificación por correo enviada a {EMAIL_RECIPIENT}")
+            return True
+            
+        except Exception as e:
+            print(f"❌ Error al enviar correo: {e}")
+            return False
+    
+    except Exception as e:
+        print(f"❌ Error general en envío de correo: {e}")
+        return False
+
+
 def main():
     """Función principal del script."""
     state = load_state()
     new_state = {}
     all_files_to_commit = []
+    
+    # Listas para seguimiento de actualizaciones
+    updated_annexes = []
+    unchanged_annexes = []
 
     for annex in ANNEX_PAGES:
         print(f"\n{'='*50}")
@@ -289,11 +419,14 @@ def main():
             new_state[annex] = date
             if state.get(annex) != date:
                 print(f"[CHANGE] Annex {annex}: {state.get(annex)} -> {date}")
+                updated_annexes.append(annex)
                 
                 # Preparar archivo para commit
                 files = prepare_file_for_commit(downloaded_file, annex, OUTPUT_DIR)
                 if files:
                     all_files_to_commit.extend(files)
+            else:
+                unchanged_annexes.append(annex)
             
             # Limpiar archivo temporal
             try:
@@ -302,18 +435,25 @@ def main():
                 pass
         else:
             print(f"[WARN] No pude descargar el archivo para Annex {annex}")
+            unchanged_annexes.append(annex)
             new_state[annex] = state.get(annex)
 
     save_state(new_state)
 
+    # Realizar commit si hay archivos para subir
+    commit_success = False
     if all_files_to_commit:
-        success = commit_files_with_github_api(all_files_to_commit, "🔄 Auto-update COSING Anexos")
-        if success:
+        commit_success = commit_files_with_github_api(all_files_to_commit, "🔄 Auto-update COSING Anexos")
+        if commit_success:
             print(f"✅ Committed {len(all_files_to_commit)} archivos exitosamente.")
         else:
             print(f"❌ Error al hacer commit y push.")
     else:
         print("✅ Sin cambios detectados.")
+    
+    # Enviar notificación por correo si hay actualizaciones o hubo errores
+    if updated_annexes or not commit_success:
+        send_notification_email(updated_annexes, unchanged_annexes)
 
 
 if __name__ == '__main__':
