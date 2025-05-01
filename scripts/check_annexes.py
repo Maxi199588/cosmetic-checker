@@ -45,16 +45,23 @@ def fetch_and_parse_date(url):
     r.raise_for_status()
     content = r.content
 
-    # Manejar .xls con xlrd
-    if url.lower().endswith('.xls'):
-        book = xlrd.open_workbook(file_contents=content)
-        sheet = book.sheet_by_index(0)
-        cell_value = sheet.cell_value(2, 0)  # fila 3, columna 1
-    else:
-        # Manejar .xlsx con openpyxl
-        wb = load_workbook(filename=io.BytesIO(content), read_only=True, data_only=True)
-        ws = wb.active
-        cell_value = ws.cell(row=3, column=1).value
+    cell_value = None
+    # Intentar con openpyxl (.xlsx)
+    if url.lower().endswith('.xlsx'):
+        try:
+            wb = load_workbook(filename=io.BytesIO(content), read_only=True, data_only=True)
+            ws = wb.active
+            cell_value = ws.cell(row=3, column=1).value
+        except Exception:
+            cell_value = None
+    # Si no resultó o es .xls, usar xlrd
+    if cell_value is None and url.lower().endswith('.xls') or cell_value is None:
+        try:
+            book = xlrd.open_workbook(file_contents=content)
+            sheet = book.sheet_by_index(0)
+            cell_value = sheet.cell_value(2, 0)
+        except Exception:
+            cell_value = None
 
     if not isinstance(cell_value, str):
         return None
@@ -62,7 +69,7 @@ def fetch_and_parse_date(url):
     return m.group(1) if m else None
 
 
-def download_file(url, dest_path):
+def download_file(url, dest_path):(url, dest_path):
     r = requests.get(url, timeout=30)
     r.raise_for_status()
     os.makedirs(os.path.dirname(dest_path), exist_ok=True)
