@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-import requests, json, os
+import requests
+import json
+import os
+import re
 from bs4 import BeautifulSoup
 from github import Github  # pip install PyGithub
 
@@ -17,7 +20,7 @@ def load_state():
         try:
             with open(STATE_FILE, "r") as f:
                 return json.load(f)
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, IOError):
             return {}
     return {}
 
@@ -49,7 +52,7 @@ def commit_and_push(files, message):
         try:
             existing = repo.get_contents(path, ref=BRANCH)
             repo.update_file(path, message, content, existing.sha, branch=BRANCH)
-        except:
+        except Exception:
             repo.create_file(path, message, content, branch=BRANCH)
 
 
@@ -64,12 +67,8 @@ def main():
         r.raise_for_status()
         soup = BeautifulSoup(r.text, "html.parser")
 
-        # Buscar enlace XLS por texto del link
-        a_xls = None
-        for link in soup.find_all("a"):
-            if link.get_text(strip=True).lower() == "xls":
-                a_xls = link
-                break
+        # Buscar enlace XLS por href terminando en .xls o .xlsx
+        a_xls = soup.find("a", href=re.compile(r"\.xls[x]?$", re.IGNORECASE))
         if not a_xls:
             print(f"[WARN] No encontré enlace XLS en Annex {anexo}")
             new_state[anexo] = state.get(anexo)
