@@ -18,13 +18,9 @@ REPO_NAME = "Maxi199588/cosmetic-checker"
 BRANCH = "main"
 OUTPUT_DIR = "RESTRICCIONES"
 
-# Configuración para notificaciones por correo
-EMAIL_ENABLED = True  # Habilitar/deshabilitar notificaciones por correo
-EMAIL_RECIPIENT = "maximiliano.gonzalez@solucionesgxp.com"
-EMAIL_SENDER = os.environ.get("EMAIL_SENDER", "github-actions@github.com")
-EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD")
-SMTP_SERVER = os.environ.get("SMTP_SERVER", "smtp.gmail.com") 
-SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
+# Configuración para notificaciones por GitHub Issues
+NOTIFICATION_BY_ISSUE = True  # Habilitar/deshabilitar notificaciones por issues
+ISSUE_LABEL = "cosing-update"  # Etiqueta para los issues creados
 
 # Patrón para extraer fecha "DD/MM/YYYY"
 DATE_PATTERNS = [
@@ -277,121 +273,79 @@ def commit_files_with_github_api(files, message):
             return False
 
 
-def send_notification_email(updated_annexes, unchanged_annexes):
-    """
-    Envía un correo electrónico con información sobre las actualizaciones.
-    
-    Args:
-        updated_annexes: Lista de anexos que se actualizaron
-        unchanged_annexes: Lista de anexos que no se actualizaron
-    
-    Returns:
-        bool: True si el correo se envió correctamente, False en caso contrario
-    """
-    if not EMAIL_ENABLED or not EMAIL_PASSWORD:
-        print("Notificaciones por correo deshabilitadas o falta contraseña")
+def create_github_issue(updated_annexes, unchanged_annexes):
+    """Crea un issue en GitHub con la información de actualización."""
+    if not GITHUB_TOKEN:
+        print("⚠️ No se ha proporcionado GITHUB_TOKEN. No se creará el issue.")
         return False
-        
+    
+    if not NOTIFICATION_BY_ISSUE:
+        print("Notificaciones por issue deshabilitadas")
+        return False
+    
     try:
-        print("Preparando notificación por correo...")
+        print("Preparando creación de issue en GitHub...")
+        gh = Github(GITHUB_TOKEN)
+        repo = gh.get_repo(REPO_NAME)
         
-        # Importar módulos necesarios para el correo
-        try:
-            import smtplib
-            from email.mime.text import MIMEText
-            from email.mime.multipart import MIMEMultipart
-        except ImportError:
-            import subprocess
-            print("Instalando dependencias para envío de correo...")
-            subprocess.check_call(["pip", "install", "secure-smtplib"])
-            import smtplib
-            from email.mime.text import MIMEText
-            from email.mime.multipart import MIMEMultipart
-        
-        # Crear el mensaje
-        msg = MIMEMultipart()
-        msg['From'] = EMAIL_SENDER
-        msg['To'] = EMAIL_RECIPIENT
-        msg['Subject'] = "Actualización de Anexos COSING"
-        
-        # Construir el cuerpo del mensaje
-        body = f"""
-<html>
-<head>
-    <style>
-        body {{ font-family: Arial, sans-serif; }}
-        .header {{ background-color: #4CAF50; color: white; padding: 10px; }}
-        .content {{ padding: 15px; }}
-        .updated {{ color: green; }}
-        .unchanged {{ color: #888; }}
-        .footer {{ font-size: 0.8em; color: #888; padding-top: 20px; }}
-    </style>
-</head>
-<body>
-    <div class="header">
-        <h2>Reporte de Actualización de Anexos COSING</h2>
-        <p>Fecha: {time.strftime('%d/%m/%Y %H:%M:%S')}</p>
-    </div>
-    <div class="content">
-"""
-        
-        # Sección de anexos actualizados
+        # Crear título para el issue
         if updated_annexes:
-            body += "<h3>Anexos Actualizados:</h3><ul>"
-            for annex in updated_annexes:
-                body += f'<li class="updated">Annex {annex}</li>'
-            body += "</ul>"
+            title = f"🔄 Actualización de Anexos COSING: {', '.join(['Annex ' + a for a in updated_annexes])}"
         else:
-            body += "<p>No se encontraron actualizaciones en ningún anexo.</p>"
+            title = "📊 Verificación de Anexos COSING - Sin cambios"
         
-        # Sección de anexos sin cambios
+        # Crear cuerpo del issue
+        body = f"## Reporte de Actualización de Anexos COSING\n"
+        body += f"Fecha: {time.strftime('%d/%m/%Y %H:%M:%S')}\n\n"
+        
+        if updated_annexes:
+            body += "### Anexos Actualizados:\n"
+            for annex in updated_annexes:
+                body += f"- **Annex {annex}**\n"
+                
+            # Añadir enlaces a los archivos actualizados
+            body += "\n### Archivos actualizados:\n"
+            for annex in updated_annexes:
+                body += f"- [COSING_Annex_{annex}_v2.xlsx](https://github.com/{REPO_NAME}/blob/main/{OUTPUT_DIR}/COSING_Annex_{annex}_v2.xlsx)\n"
+                body += f"- [COSING_Annex_{annex}_v2.xls](https://github.com/{REPO_NAME}/blob/main/{OUTPUT_DIR}/COSING_Annex_{annex}_v2.xls)\n"
+        else:
+            body += "**No se encontraron actualizaciones en ningún anexo.**\n"
+        
         if unchanged_annexes:
-            body += "<h3>Anexos sin cambios:</h3><ul>"
+            body += "\n### Anexos sin cambios:\n"
             for annex in unchanged_annexes:
-                body += f'<li class="unchanged">Annex {annex}</li>'
-            body += "</ul>"
+                body += f"- Annex {annex}\n"
         
-        # Cerrar el mensaje
-        body += """
-    </div>
-    <div class="footer">
-        <p>Este es un mensaje automático generado por el sistema de monitoreo COSING.</p>
-    </div>
-</body>
-</html>
-"""
+        # Añadir pie con información adicional
+        body += "\n---\n"
+        body += "*Este issue fue generado automáticamente por el sistema de monitoreo COSING.*\n"
+        body += f"*Último chequeo: {time.strftime('%Y-%m-%d %H:%M:%S')}*"
         
-        # Adjuntar el cuerpo HTML al mensaje
-        msg.attach(MIMEText(body, 'html'))
+        # Preparar etiquetas
+        labels = []
+        if ISSUE_LABEL:
+            # Verificar si la etiqueta existe, si no, crearla
+            try:
+                repo.get_label(ISSUE_LABEL)
+                labels.append(ISSUE_LABEL)
+            except:
+                try:
+                    repo.create_label(name=ISSUE_LABEL, color="4CAF50")
+                    labels.append(ISSUE_LABEL)
+                except:
+                    print(f"No se pudo crear la etiqueta {ISSUE_LABEL}")
         
-        # Conectar al servidor SMTP y enviar el correo
-        try:
-            if SMTP_PORT == 465:
-                # Conexión SSL
-                server = smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT)
-            else:
-                # Conexión estándar con STARTTLS
-                server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
-                server.starttls()
-            
-            # Login con credenciales
-            server.login(EMAIL_SENDER, EMAIL_PASSWORD)
-            
-            # Enviar el correo
-            server.send_message(msg)
-            
-            # Cerrar la conexión
-            server.quit()
-            
-            print(f"✅ Notificación por correo enviada a {EMAIL_RECIPIENT}")
-            return True
-            
-        except Exception as e:
-            print(f"❌ Error al enviar correo: {e}")
-            return False
+        # Crear el issue
+        issue = repo.create_issue(
+            title=title,
+            body=body,
+            labels=labels
+        )
+        print(f"✅ Issue creado: {issue.html_url}")
+        return True
     
     except Exception as e:
-        print(f"❌ Error general en envío de correo: {e}")
+        print(f"❌ Error al crear issue en GitHub: {e}")
         return False
 
 
@@ -451,9 +405,9 @@ def main():
     else:
         print("✅ Sin cambios detectados.")
     
-    # Enviar notificación por correo si hay actualizaciones o hubo errores
+    # Crear issue en GitHub si hay actualizaciones o hubo errores
     if updated_annexes or not commit_success:
-        send_notification_email(updated_annexes, unchanged_annexes)
+        create_github_issue(updated_annexes, unchanged_annexes)
 
 
 if __name__ == '__main__':
