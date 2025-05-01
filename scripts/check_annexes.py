@@ -2,15 +2,15 @@
 import os
 import re
 import json
+import time
 import requests
 import io
 import pandas as pd
-from bs4 import BeautifulSoup
 from github import Github
 
 # —— CONFIGURACIÓN ——
 BASE_URL = "https://ec.europa.eu/growth/tools-databases/cosing"
-STATIC_BASE_URL = f"{BASE_URL}/assets/data"
+API_URL = "https://ec.europa.eu/growth/tools-databases/cosing/api"
 ANNEX_PAGES = ["II", "III", "IV", "V", "VI"]
 STATE_FILE = "annexes_state.json"
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
@@ -42,230 +42,184 @@ def save_state(state):
         json.dump(state, f, indent=2, ensure_ascii=False)
 
 
-def inspect_html_content(content, annex):
-    """Analiza el contenido HTML para buscar enlaces a archivos Excel."""
-    print("El contenido descargado es HTML. Analizando...")
+def download_annex_direct(annex):
+    """
+    Descarga directamente un anexo utilizando la API de COSING.
+    Intenta varios endpoints posibles para encontrar el correcto.
+    """
+    print(f"\n--- Descargando Annex {annex} directamente ---")
     
-    # Guardar el HTML para diagnóstico
-    with open(f"debug_annex_{annex}.html", "wb") as f:
-        f.write(content)
-        
-    soup = BeautifulSoup(content, 'html.parser')
-    
-    # Buscar enlaces que podrían apuntar a archivos Excel
-    excel_links = []
-    for a in soup.find_all('a', href=True):
-        href = a['href']
-        if '.xls' in href.lower() or '.xlsx' in href.lower():
-            excel_links.append(href)
-            print(f"Encontrado posible enlace Excel: {href}")
-    
-    # Buscar posibles redirecciones
-    meta_refresh = soup.find('meta', attrs={'http-equiv': 'refresh'})
-    if meta_refresh and 'content' in meta_refresh.attrs:
-        content = meta_refresh['content']
-        url_match = re.search(r'URL=([^"]+)', content, re.IGNORECASE)
-        if url_match:
-            redirect_url = url_match.group(1)
-            print(f"Encontrada redirección a: {redirect_url}")
-            return redirect_url
-    
-    # Si encontramos enlaces a Excel, devolver el primero
-    if excel_links:
-        # Convertir en URL absoluta si es necesario
-        if excel_links[0].startswith('/'):
-            return f"{BASE_URL}{excel_links[0]}"
-        return excel_links[0]
-    
-    # Buscar mensajes de error o información útil
-    for tag in soup.find_all(['h1', 'h2', 'h3', 'h4', 'p']):
-        if tag.text and len(tag.text.strip()) > 0:
-            print(f"Texto en la página: {tag.text.strip()}")
-    
-    return None
-
-
-def find_correct_excel_url(annex):
-    """Intenta encontrar la URL correcta para el archivo Excel del anexo."""
-    print(f"\n--- Buscando URL correcta para Annex {annex} ---")
-    
-    # Primero, intentar la página principal de COSING
-    main_url = f"{BASE_URL}/ref_data/annexes/Annex_{annex}.cfm"
-    try:
-        print(f"Consultando página principal: {main_url}")
-        r = requests.get(main_url, timeout=30)
-        r.raise_for_status()
-        
-        # Analizar HTML para encontrar enlaces a archivos Excel
-        soup = BeautifulSoup(r.content, 'html.parser')
-        for a in soup.find_all('a', href=True):
-            href = a['href']
-            if ('.xls' in href.lower() or '.xlsx' in href.lower()) and 'annex' in href.lower():
-                print(f"Encontrado enlace Excel en página principal: {href}")
-                if href.startswith('/') or href.startswith('./'):
-                    full_url = f"{BASE_URL}{href.replace('./', '/')}"
-                elif not href.startswith('http'):
-                    full_url = f"{BASE_URL}/{href}"
-                else:
-                    full_url = href
-                print(f"URL completa: {full_url}")
-                return full_url
-    except Exception as e:
-        print(f"Error al consultar página principal: {e}")
-    
-    # Si no encontramos en la página principal, intentar patrones alternativos
-    alternative_patterns = [
-        f"{STATIC_BASE_URL}/Annex_{annex}.xlsx",
-        f"{STATIC_BASE_URL}/Annex_{annex}.xls",
-        f"{STATIC_BASE_URL}/COSING_Annex_{annex}.xlsx",
-        f"{STATIC_BASE_URL}/COSING_Annex_{annex}.xls",
-        f"{BASE_URL}/assets/data/Annex_{annex}.xlsx",
-        f"{BASE_URL}/assets/data/Annex_{annex}.xls",
-        f"{BASE_URL}/assets/data/COSING_Annex_{annex}.xlsx",
-        f"{BASE_URL}/assets/data/COSING_Annex_{annex}.xls"
+    # Definir posibles endpoints y patrones
+    endpoints = [
+        f"{API_URL}/annex/{annex}/download",
+        f"{API_URL}/annexes/{annex}/download",
+        f"{API_URL}/annex/download/{annex}",
+        f"{API_URL}/annexes/download/{annex}",
+        f"{BASE_URL}/reference/annexes/download/{annex}",
+        f"{BASE_URL}/reference/annexes/list/{annex}/download"
     ]
     
-    for url in alternative_patterns:
-        try:
-            print(f"Probando URL alternativa: {url}")
-            r = requests.head(url, timeout=10)
-            if r.status_code == 200:
-                content_type = r.headers.get('content-type', '')
-                if 'excel' in content_type.lower() or 'application/vnd.ms-excel' in content_type.lower():
-                    print(f"¡Encontrado archivo Excel válido!: {url}")
-                    return url
-        except Exception as e:
-            print(f"Error al probar {url}: {e}")
+    # Definir cabeceras comunes para simular un navegador
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+        "Referer": f"{BASE_URL}/reference/annexes/list/{annex}",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+        "Cache-Control": "max-age=0"
+    }
     
-    # Última opción: buscar en la página de descarga de COSING
-    try:
-        download_url = f"{BASE_URL}/index.cfm?fuseaction=search.annexes"
-        print(f"Consultando página de anexos: {download_url}")
-        r = requests.get(download_url, timeout=30)
-        r.raise_for_status()
+    # Intentar cada endpoint
+    for url in endpoints:
+        try:
+            print(f"Intentando URL: {url}")
+            
+            # Realizar una solicitud GET para intentar la descarga directa
+            r = requests.get(url, headers=headers, stream=True, timeout=30)
+            
+            # Verificar si la respuesta es exitosa y parece ser un archivo Excel
+            if r.status_code == 200:
+                content_type = r.headers.get('Content-Type', '')
+                content_disp = r.headers.get('Content-Disposition', '')
+                
+                print(f"Respuesta exitosa. Content-Type: {content_type}")
+                print(f"Content-Disposition: {content_disp}")
+                
+                # Verificar si parece ser un Excel por el tipo de contenido o la disposición
+                if ('excel' in content_type.lower() or 
+                    'application/vnd.ms-excel' in content_type.lower() or
+                    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' in content_type.lower() or
+                    '.xls' in content_disp.lower()):
+                    
+                    # Guardar el archivo
+                    filename = f"temp_annex_{annex}.xlsx"
+                    if '.xls' in content_disp.lower() and '.xlsx' not in content_disp.lower():
+                        filename = f"temp_annex_{annex}.xls"
+                    
+                    with open(filename, 'wb') as f:
+                        for chunk in r.iter_content(chunk_size=8192):
+                            f.write(chunk)
+                    
+                    print(f"Archivo descargado como {filename}")
+                    return filename
+                
+                # Si no es un Excel pero obtenemos respuesta, guardamos para diagnóstico
+                with open(f"response_annex_{annex}.bin", 'wb') as f:
+                    for chunk in r.iter_content(chunk_size=8192):
+                        f.write(chunk)
+                print(f"Respuesta guardada en response_annex_{annex}.bin para diagnóstico")
         
-        soup = BeautifulSoup(r.content, 'html.parser')
-        for a in soup.find_all('a', href=True):
-            href = a['href']
-            annex_text = f"annex {annex}"
-            if ('.xls' in href.lower() or '.xlsx' in href.lower()) and annex_text.lower() in a.text.lower():
-                print(f"Encontrado enlace para Annex {annex}: {href}")
-                if href.startswith('/') or href.startswith('./'):
-                    full_url = f"{BASE_URL}{href.replace('./', '/')}"
-                elif not href.startswith('http'):
-                    full_url = f"{BASE_URL}/{href}"
-                else:
-                    full_url = href
-                print(f"URL completa: {full_url}")
-                return full_url
+        except Exception as e:
+            print(f"Error al intentar descargar desde {url}: {e}")
+    
+    print("Intentando método alternativo: solicitud POST")
+    
+    # Intentar con una solicitud POST
+    post_url = f"{API_URL}/annex/download"
+    post_data = {"annex": annex, "format": "excel"}
+    
+    try:
+        r = requests.post(post_url, json=post_data, headers=headers, stream=True, timeout=30)
+        
+        if r.status_code == 200:
+            content_type = r.headers.get('Content-Type', '')
+            content_disp = r.headers.get('Content-Disposition', '')
+            
+            print(f"Respuesta POST exitosa. Content-Type: {content_type}")
+            print(f"Content-Disposition: {content_disp}")
+            
+            if ('excel' in content_type.lower() or 
+                'application/vnd.ms-excel' in content_type.lower() or
+                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' in content_type.lower() or
+                '.xls' in content_disp.lower()):
+                
+                filename = f"temp_annex_{annex}.xlsx"
+                if '.xls' in content_disp.lower() and '.xlsx' not in content_disp.lower():
+                    filename = f"temp_annex_{annex}.xls"
+                
+                with open(filename, 'wb') as f:
+                    for chunk in r.iter_content(chunk_size=8192):
+                        f.write(chunk)
+                
+                print(f"Archivo descargado como {filename}")
+                return filename
+    
     except Exception as e:
-        print(f"Error al consultar página de anexos: {e}")
+        print(f"Error en la solicitud POST: {e}")
+    
+    # Si todo falla, intentar la URL directa basada en la observación de la página
+    try:
+        # Intentar con la URL exacta del documento
+        direct_url = f"https://ec.europa.eu/growth/tools-databases/cosing/assets/data/Annex_{annex.upper()}_OFFICIAL.xlsx"
+        print(f"Intentando URL directa: {direct_url}")
+        
+        r = requests.get(direct_url, headers=headers, stream=True, timeout=30)
+        
+        if r.status_code == 200:
+            filename = f"temp_annex_{annex}.xlsx"
+            with open(filename, 'wb') as f:
+                for chunk in r.iter_content(chunk_size=8192):
+                    f.write(chunk)
+            
+            print(f"Archivo descargado como {filename}")
+            return filename
+    
+    except Exception as e:
+        print(f"Error con URL directa: {e}")
     
     return None
 
 
-def fetch_and_parse_date(url, annex):
-    """
-    Descarga el archivo y busca la fecha de actualización.
-    """
-    print(f"Descargando {url}...")
+def extract_date_from_excel(file_path):
+    """Extrae la fecha de actualización de un archivo Excel."""
     try:
-        r = requests.get(url, timeout=30)
-        r.raise_for_status()
-        
-        # Verificar el tipo de contenido
-        content_type = r.headers.get('content-type', '')
-        print(f"Tipo de contenido: {content_type}")
-        
-        if 'text/html' in content_type:
-            # Si recibimos HTML, intentar encontrar la URL real del Excel
-            new_url = inspect_html_content(r.content, annex)
-            if new_url:
-                print(f"Intentando con nueva URL: {new_url}")
-                return fetch_and_parse_date(new_url, annex)
-            else:
-                # Si no encontramos ninguna URL en el HTML, intentar buscar en la web
-                correct_url = find_correct_excel_url(annex)
-                if correct_url:
-                    print(f"Encontrada URL correcta: {correct_url}")
-                    return fetch_and_parse_date(correct_url, annex)
-                return None
-        
-        # Guardar temporalmente el archivo para inspeccionarlo
-        temp_file = f"temp_annex_{annex}.xls"
-        with open(temp_file, 'wb') as f:
-            f.write(r.content)
-        
-        print(f"Archivo descargado, tamaño: {len(r.content)} bytes")
-        
-        # Verificar que sea un archivo Excel válido
-        with open(temp_file, 'rb') as f:
-            header = f.read(8)
-            if header[:2] != b'\xD0\xCF' and header[:5] != b'PK\x03\x04\x14':  # Firmas de XLS y XLSX
-                print("¡El archivo no tiene la firma de un Excel válido!")
-                # Guardar para inspección
-                with open(f"invalid_excel_{annex}.bin", 'wb') as debug_f:
-                    with open(temp_file, 'rb') as src_f:
-                        debug_f.write(src_f.read())
-                os.remove(temp_file)
-                return None
-        
-        # Intentar leer con el motor adecuado
-        if url.endswith('.xlsx'):
+        # Detectar el tipo de archivo por la extensión
+        if file_path.endswith('.xlsx'):
             engine = 'openpyxl'
         else:
             engine = 'xlrd'
             
-        try:
-            print(f"Intentando leer con {engine}...")
-            df = pd.read_excel(temp_file, engine=engine, header=None)
-            print(f"¡Éxito! Leído con {engine}. Filas: {len(df)}")
-        except Exception as e:
-            print(f"Error con {engine}: {e}")
-            # Intentar con el otro motor
-            try:
-                alternate_engine = 'openpyxl' if engine == 'xlrd' else 'xlrd'
-                print(f"Intentando con {alternate_engine}...")
-                df = pd.read_excel(temp_file, engine=alternate_engine, header=None)
-                print(f"¡Éxito! Leído con {alternate_engine}. Filas: {len(df)}")
-            except Exception as e2:
-                print(f"Error con {alternate_engine}: {e2}")
-                os.remove(temp_file)
-                return None
+        print(f"Leyendo {file_path} con {engine}...")
+        df = pd.read_excel(file_path, engine=engine, header=None)
+        print(f"Archivo leído con éxito. Filas: {len(df)}")
         
         # Buscar la fecha en las primeras 15 filas
         for idx in range(min(15, len(df))):
             for col in range(min(5, len(df.columns))):
-                val = df.iloc[idx, col]
-                if isinstance(val, str):
-                    print(f"Fila {idx+1}, Col {col+1}: {val}")
-                    # Probar todos los patrones de fecha
-                    for pattern in DATE_PATTERNS:
-                        m = pattern.search(val)
-                        if m:
-                            date = m.group(1)
-                            print(f"¡Fecha encontrada!: {date} en fila {idx+1}, columna {col+1}")
-                            os.remove(temp_file)
-                            return (date, url)  # Devolver también la URL correcta
+                try:
+                    val = df.iloc[idx, col]
+                    if isinstance(val, str):
+                        print(f"Fila {idx+1}, Col {col+1}: {val}")
+                        # Probar todos los patrones de fecha
+                        for pattern in DATE_PATTERNS:
+                            m = pattern.search(val)
+                            if m:
+                                date = m.group(1)
+                                print(f"¡Fecha encontrada!: {date} en fila {idx+1}, columna {col+1}")
+                                return date
+                except Exception as e:
+                    print(f"Error al leer celda ({idx}, {col}): {e}")
         
-        os.remove(temp_file)
         print("No se encontró ninguna fecha en el formato esperado.")
-        return None
         
-    except Exception as e:
-        print(f"Error general al procesar {url}: {e}")
-        if os.path.exists(f"temp_annex_{annex}.xls"):
-            os.remove(f"temp_annex_{annex}.xls")
+        # Último intento: buscar cualquier celda que parezca una fecha
+        for idx in range(min(15, len(df))):
+            for col in range(min(5, len(df.columns))):
+                try:
+                    val = df.iloc[idx, col]
+                    if isinstance(val, pd.Timestamp):
+                        date_str = val.strftime('%d/%m/%Y')
+                        print(f"¡Fecha encontrada (Timestamp)!: {date_str} en fila {idx+1}, columna {col+1}")
+                        return date_str
+                except Exception as e:
+                    pass
+        
         return None
-
-
-def download_file(url, dest_path):
-    r = requests.get(url, timeout=30)
-    r.raise_for_status()
-    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-    with open(dest_path, 'wb') as f:
-        f.write(r.content)
-    return dest_path
+    
+    except Exception as e:
+        print(f"Error al procesar el archivo Excel: {e}")
+        return None
 
 
 def convert_xls_to_xlsx(xls_path, xlsx_path):
@@ -297,6 +251,45 @@ def commit_and_push(files, message):
             repo.create_file(file_path, message, content, branch=BRANCH)
 
 
+def try_inspect_webpage(annex):
+    """Intenta inspeccionar la página web para encontrar pistas sobre la URL de descarga."""
+    url = f"{BASE_URL}/reference/annexes/list/{annex}"
+    
+    try:
+        print(f"Inspeccionando página web: {url}")
+        r = requests.get(url, timeout=30)
+        r.raise_for_status()
+        
+        # Guardar HTML para inspección manual
+        with open(f"page_annex_{annex}.html", "wb") as f:
+            f.write(r.content)
+        
+        # Buscar scripts JavaScript que podrían contener URLs o endpoints
+        script_pattern = re.compile(r'<script[^>]*>(.*?)</script>', re.DOTALL)
+        scripts = script_pattern.findall(r.text)
+        
+        # Buscar posibles endpoints de API o URLs de descarga
+        api_pattern = re.compile(r'(["\'](\/api\/[^"\']*|\/assets\/data\/[^"\']*)["\'])', re.DOTALL)
+        download_pattern = re.compile(r'(["\'](download|excel|xls|xlsx)["\'])', re.IGNORECASE | re.DOTALL)
+        
+        print("Buscando posibles endpoints de API o URLs de descarga en scripts...")
+        for script in scripts:
+            api_matches = api_pattern.findall(script)
+            download_matches = download_pattern.findall(script)
+            
+            if api_matches:
+                print(f"Posibles endpoints de API encontrados: {api_matches}")
+            
+            if download_matches:
+                print(f"Posibles referencias de descarga encontradas: {download_matches}")
+        
+        return True
+    
+    except Exception as e:
+        print(f"Error al inspeccionar página: {e}")
+        return False
+
+
 def main():
     state = load_state()
     new_state = {}
@@ -318,54 +311,60 @@ def main():
         print("⚠️ openpyxl no está instalado. Instalando...")
         import subprocess
         subprocess.check_call(["pip", "install", "openpyxl"])
-    
-    try:
-        import bs4
-        print(f"BeautifulSoup version: {bs4.__version__}")
-    except ImportError:
-        print("⚠️ BeautifulSoup no está instalado. Instalando...")
-        import subprocess
-        subprocess.check_call(["pip", "install", "beautifulsoup4"])
 
     for annex in ANNEX_PAGES:
         print(f"\n{'='*50}")
         print(f"Procesando ANNEX {annex}")
         print(f"{'='*50}")
         
-        # Buscar la URL correcta directamente
-        correct_url = find_correct_excel_url(annex)
+        # Primero intentamos inspeccionar la página para obtener pistas
+        try_inspect_webpage(annex)
         
-        if correct_url:
-            result = fetch_and_parse_date(correct_url, annex)
-            if result:
-                date, final_url = result
-                print(f"Fecha encontrada: {date} en {final_url}")
+        # Descargar archivo directamente
+        downloaded_file = download_annex_direct(annex)
+        
+        if downloaded_file:
+            # Extraer fecha del archivo
+            date = extract_date_from_excel(downloaded_file)
+            
+            if date:
+                print(f"Fecha encontrada: {date}")
                 
                 new_state[annex] = date
                 if state.get(annex) != date:
                     print(f"[CHANGE] Annex {annex}: {state.get(annex)} -> {date}")
-                    # descarga y añade al commit
+                    # Preparar archivo para commit
                     filename = f"COSING_Annex_{annex}_v2.xlsx"
                     dest = os.path.join(OUTPUT_DIR, filename)
                     
-                    if final_url.endswith('.xls'):
-                        tmp = download_file(final_url, os.path.join(OUTPUT_DIR, f"COSING_Annex_{annex}_v2.xls"))
-                        # Conversión 
-                        success = convert_xls_to_xlsx(tmp, dest)
+                    if downloaded_file.endswith('.xls'):
+                        # Conversión a .xlsx
+                        success = convert_xls_to_xlsx(downloaded_file, dest)
                         if not success:
-                            print(f"⚠️ No se pudo convertir {tmp} a .xlsx. Usaremos el .xls original.")
-                            dest = tmp
-                        else:
-                            os.remove(tmp)
+                            print(f"⚠️ No se pudo convertir a .xlsx. Usaremos el .xls original.")
+                            # Copiar el archivo tal cual
+                            import shutil
+                            os.makedirs(os.path.dirname(dest), exist_ok=True)
+                            shutil.copy2(downloaded_file, dest.replace('.xlsx', '.xls'))
+                            dest = dest.replace('.xlsx', '.xls')
                     else:
-                        download_file(final_url, dest)
-                        
+                        # Copiar el archivo tal cual
+                        import shutil
+                        os.makedirs(os.path.dirname(dest), exist_ok=True)
+                        shutil.copy2(downloaded_file, dest)
+                    
                     to_commit.append(dest)
+                
+                # Limpiar archivo temporal
+                try:
+                    os.remove(downloaded_file)
+                except:
+                    pass
             else:
                 print(f"[WARN] No pude leer la fecha en Annex {annex}")
                 new_state[annex] = state.get(annex)
         else:
-            print(f"[WARN] No pude encontrar la URL correcta para Annex {annex}")
+            print(f"[WARN] No pude descargar el archivo para Annex {annex}")
             new_state[annex] = state.get(annex)
 
     save_state(new_state)
