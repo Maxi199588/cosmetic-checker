@@ -16,8 +16,13 @@ REPO_NAME       = "Maxi199588/cosmetic-checker"
 BRANCH          = "main"
 OUTPUT_DIR      = "RESTRICCIONES"
 
-# Patrón para extraer fecha "DD/MM/YYYY"
-DATE_PATTERN = re.compile(r"Last update:\s*(\d{2}/\d{2}/\d{4})")
+# Multiple date patterns to try
+DATE_PATTERNS = [
+    re.compile(r"Last update:\s*(\d{2}/\d{2}/\d{4})"),
+    re.compile(r"(\d{2}/\d{2}/\d{4})"),
+    re.compile(r"Update[d]?:?\s*(\d{2}/\d{2}/\d{4})"),
+    re.compile(r"Date:?\s*(\d{2}/\d{2}/\d{4})")
+]
 
 
 def load_state():
@@ -37,19 +42,61 @@ def save_state(state):
 
 def fetch_and_parse_date(url):
     """
-    Descarga el archivo (xls o xlsx) y usa pandas para leer filas A3 y A4,
-    extrayendo la fecha interna en formato DD/MM/YYYY.
+    Descarga el archivo (xls o xlsx) y usa pandas para buscar la fecha
+    en varios formatos y ubicaciones.
     """
+    print(f"Descargando {url}...")
     r = requests.get(url, timeout=30)
     r.raise_for_status()
-    # Leer con pandas sin importar la extensión
-    df = pd.read_excel(io.BytesIO(r.content), header=None, nrows=5)
-    for idx in (2, 3):  # fila 3 y 4
-        val = df.iloc[idx, 0]
-        if isinstance(val, str):
-            m = DATE_PATTERN.search(val)
-            if m:
-                return m.group(1)
+    
+    try:
+        # Leer con pandas sin importar la extensión
+        df = pd.read_excel(io.BytesIO(r.content), header=None, nrows=10)
+        
+        # Debugging: imprimir primeras filas para entender la estructura
+        print("Primeras filas del archivo:")
+        for i in range(min(10, len(df))):
+            print(f"Fila {i+1}: {df.iloc[i, 0]}")
+        
+        # Buscar en más filas (las 10 primeras)
+        for idx in range(10):
+            for col in range(min(3, len(df.columns))):  # Buscar en las primeras 3 columnas
+                val = df.iloc[idx, col]
+                if isinstance(val, str):
+                    # Probar todos los patrones de fecha
+                    for pattern in DATE_PATTERNS:
+                        m = pattern.search(val)
+                        if m:
+                            date = m.group(1)
+                            print(f"¡Fecha encontrada!: {date} en fila {idx+1}, columna {col+1}")
+                            return date
+        
+        # Si aún no encontramos, intentar otro enfoque
+        # A veces la fecha puede estar en celdas combinadas o headers
+        if 'xlrd' not in str(type(df)):
+            # Si estamos usando openpyxl, intentar leer las propiedades del documento
+            try:
+                buffer = io.BytesIO(r.content)
+                from openpyxl import load_workbook
+                wb = load_workbook(buffer)
+                sheet = wb.active
+                
+                # Buscar en merged cells
+                for merged_cell in sheet.merged_cells.ranges:
+                    val = sheet.cell(merged_cell.min_row, merged_cell.min_col).value
+                    if isinstance(val, str):
+                        for pattern in DATE_PATTERNS:
+                            m = pattern.search(val)
+                            if m:
+                                date = m.group(1)
+                                print(f"¡Fecha encontrada en celda combinada!: {date}")
+                                return date
+            except Exception as e:
+                print(f"Error al intentar leer celdas combinadas: {e}")
+                
+    except Exception as e:
+        print(f"Error al leer el archivo: {e}")
+    
     return None
 
 
@@ -82,17 +129,32 @@ def main():
     for annex in ANNEX_PAGES:
         date = None
         chosen_url = None
-        # probar xlsx y xls
+        
+        # Probar primero .xlsx y luego .xls
         for ext in ('.xlsx', '.xls'):
             url = f"{STATIC_BASE_URL}/COSING_Annex_{annex}_v2{ext}"
             try:
+                print(f"\n--- Procesando Annex {annex} ({ext}) ---")
                 d = fetch_and_parse_date(url)
-            except Exception:
-                d = None
-            if d:
-                date = d
-                chosen_url = url
-                break
+                if d:
+                    date = d
+                    chosen_url = url
+                    break
+            except Exception as e:
+                print(f"Error procesando {url}: {e}")
+        
+        if not date:
+            # Si no se encontró fecha en ninguna extensión, intentar con otro nombre de archivo
+            # A veces hay variaciones como espacios o números de versión
+            try:
+                url = f"{STATIC_BASE_URL}/COSING_Annex_{annex}_v2 6.xls"
+                print(f"\n--- Intentando formato alternativo: {url} ---")
+                d = fetch_and_parse_date(url)
+                if d:
+                    date = d
+                    chosen_url = url
+            except Exception as e:
+                print(f"Error con formato alternativo: {e}")
 
         if not date:
             print(f"[WARN] No pude leer la fecha en Annex {annex}")
