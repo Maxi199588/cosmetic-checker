@@ -124,33 +124,91 @@ def calculate_file_hash(file_path):
     return hasher.hexdigest()
 
 
-def create_empty_xlsx(output_path, title, description):
-    """Crea un archivo XLSX vacío con información básica."""
+def convert_xls_to_xlsx(xls_path, xlsx_path):
+    """
+    Convierte un archivo XLS a XLSX utilizando el método más adecuado
+    según el entorno de ejecución.
+    """
     try:
-        # Verificar si openpyxl está instalado
-        try:
-            from openpyxl import Workbook
-        except ImportError:
-            import subprocess
-            subprocess.check_call(["pip", "install", "openpyxl"])
-            from openpyxl import Workbook
+        # Intentar usar win32com (solo en Windows)
+        if os.name == 'nt':  # Verificar si estamos en Windows
+            try:
+                print(f"Intentando convertir con win32com (Excel API)...")
+                import win32com.client
+                
+                excel = win32com.client.Dispatch("Excel.Application")
+                excel.Visible = False
+                
+                wb = excel.Workbooks.Open(os.path.abspath(xls_path))
+                wb.SaveAs(os.path.abspath(xlsx_path), FileFormat=51)  # 51 = xlsx
+                wb.Close()
+                excel.Quit()
+                
+                print(f"Conversión exitosa con win32com")
+                return True
+            except Exception as e:
+                print(f"Error con win32com: {e}")
         
-        # Crear un nuevo libro
+        # Método alternativo para entornos sin Excel (Linux/GitHub Actions)
+        print("Usando método alternativo para entornos sin Excel...")
+        
+        # En GitHub Actions, usaremos LibreOffice si está disponible
+        try:
+            # Verificar si LibreOffice está disponible
+            import subprocess
+            result = subprocess.run(['which', 'libreoffice'], capture_output=True, text=True)
+            
+            if result.returncode == 0:
+                print("Convirtiendo con LibreOffice...")
+                output_dir = os.path.dirname(xlsx_path)
+                subprocess.run([
+                    'libreoffice',
+                    '--headless',
+                    '--convert-to', 'xlsx',
+                    '--outdir', output_dir,
+                    xls_path
+                ], check=True)
+                
+                # LibreOffice mantiene el mismo nombre base pero cambia la extensión
+                base_name = os.path.basename(xls_path)
+                base_name_without_ext = os.path.splitext(base_name)[0]
+                converted_file = os.path.join(output_dir, f"{base_name_without_ext}.xlsx")
+                
+                # Renombrar si es necesario
+                if converted_file != xlsx_path:
+                    os.rename(converted_file, xlsx_path)
+                
+                print(f"Conversión exitosa con LibreOffice")
+                return True
+            else:
+                print("LibreOffice no está disponible")
+        except Exception as e:
+            print(f"Error con LibreOffice: {e}")
+        
+        # Si todo falla, crear un XLSX con información básica del XLS
+        print("Usando método de fallback: crear XLSX con información del XLS...")
+        
+        from openpyxl import Workbook
         wb = Workbook()
         ws = wb.active
         ws.title = "Información"
         
-        # Añadir encabezados
-        ws['A1'] = title
-        ws['A2'] = description
+        # Añadir información básica
+        file_name = os.path.basename(xls_path)
+        ws['A1'] = f"{os.path.splitext(file_name)[0]} Data"
+        ws['A2'] = "Este archivo XLSX contiene los datos del Anexo descargado de la base de datos CosIng"
         ws['A3'] = f"Generado el {time.strftime('%Y-%m-%d %H:%M:%S')}"
+        ws['A4'] = f"Archivo original: {file_name}"
         
         # Guardar el archivo
-        wb.save(output_path)
-        print(f"Archivo XLSX creado correctamente: {output_path}")
-        return True
+        wb.save(xlsx_path)
+        print(f"Creado XLSX básico como fallback")
+        
+        # Indicar que no se realizó una conversión completa
+        return False
+    
     except Exception as e:
-        print(f"Error al crear archivo XLSX: {e}")
+        print(f"Error general en conversión: {e}")
         return False
 
 
@@ -160,21 +218,22 @@ def prepare_file_for_commit(downloaded_file, annex, output_dir):
         # Crear directorios si no existen
         os.makedirs(output_dir, exist_ok=True)
         
-        # Crear archivo XLSX
-        xlsx_path = os.path.join(output_dir, f"COSING_Annex_{annex}_v2.xlsx")
-        success = create_empty_xlsx(
-            xlsx_path,
-            f"Annex {annex} Data",
-            "Este archivo XLSX contiene los datos del Anexo descargado de la base de datos CosIng"
-        )
-        
-        # Siempre guardar también el archivo XLS original
+        # Siempre guardar el archivo XLS original primero
         xls_path = os.path.join(output_dir, f"COSING_Annex_{annex}_v2.xls")
         import shutil
         shutil.copy2(downloaded_file, xls_path)
         print(f"Archivo XLS original copiado a {xls_path}")
         
-        return [xlsx_path, xls_path] if success else [xls_path]
+        # Intentar convertir a XLSX
+        xlsx_path = os.path.join(output_dir, f"COSING_Annex_{annex}_v2.xlsx")
+        conversion_success = convert_xls_to_xlsx(downloaded_file, xlsx_path)
+        
+        if conversion_success:
+            print(f"Archivo convertido exitosamente a XLSX: {xlsx_path}")
+            return [xlsx_path, xls_path]
+        else:
+            print(f"No se pudo realizar una conversión completa a XLSX. Se ha creado un archivo básico.")
+            return [xlsx_path, xls_path]  # Devolvemos ambos de todas formas
     
     except Exception as e:
         print(f"Error al preparar archivos para commit: {e}")
