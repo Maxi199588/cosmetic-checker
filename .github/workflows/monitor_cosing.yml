@@ -1,37 +1,49 @@
 name: Monitor COSING Annexes
-# 1) Dale permiso de escritura a los contenidos
+
+# Permisos para escritura de contenidos
 permissions:
   contents: write
+
 on:
   schedule:
-    - cron: '0 9 * * *'  # Corregido el formato del cron (faltaba un espacio)
-  workflow_dispatch:
+    - cron: '0 9 * * *'  # Ejecutar todos los días a las 9:00 UTC (6:00 AM Uruguay)
+  workflow_dispatch:  # Permitir ejecución manual
+
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      # 2) Haz checkout persistiendo credenciales (para poder push)
+      # Checkout del repositorio con credenciales persistentes para poder hacer push
       - name: Checkout repo
         uses: actions/checkout@v3
         with:
           persist-credentials: true
+      
+      # Configurar Python
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.x'
+      
+      # Instalar LibreOffice para conversión XLS a XLSX
+      - name: Install LibreOffice
+        run: sudo apt-get update && sudo apt-get install -y libreoffice
+      
+      # Instalar dependencias de Python
       - name: Install dependencies
         run: |
-          pip install requests beautifulsoup4 PyGithub openpyxl xlrd pandas
+          pip install requests PyGithub openpyxl xlrd pandas
+      
+      # Ejecutar script de monitoreo
       - name: Run monitor script
         env:
-          # este token ya viene inyectado automáticamente
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Agregando los secretos para Smartsheet
           SMARTSHEET_TOKEN: ${{ secrets.SMARTSHEET_TOKEN }}
-          # Secretos para correo (por si los necesitaras en el futuro)
           EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
         run: python scripts/check_annexes.py
+      
+      # Commit y push si hay cambios
       - name: Commit & Push if changed
         run: |
           git config user.name "github-actions[bot]"
