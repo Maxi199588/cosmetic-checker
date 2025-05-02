@@ -1,40 +1,37 @@
 name: Monitor COSING Annexes
-
 # 1) Dale permiso de escritura a los contenidos
 permissions:
   contents: write
-
 on:
   schedule:
-    - cron:  '0 9 * * *'
+    - cron: '0 9 * * *'  # Corregido el formato del cron (faltaba un espacio)
   workflow_dispatch:
-
 jobs:
   check:
     runs-on: ubuntu-latest
-
     steps:
       # 2) Haz checkout persistiendo credenciales (para poder push)
       - name: Checkout repo
         uses: actions/checkout@v3
         with:
           persist-credentials: true
-
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.x'
-
       - name: Install dependencies
         run: |
-          pip install requests beautifulsoup4 PyGithub openpyxl xlrd pandas pyexcel pyexcel-xls pyexcel-xlsx msoffcrypto-tool
-
+          pip install requests beautifulsoup4 PyGithub openpyxl xlrd pandas
       - name: Run monitor script
         env:
           # este token ya viene inyectado automáticamente
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Agregando los secretos para Smartsheet
+          SMARTSHEET_TOKEN: ${{ secrets.SMARTSHEET_TOKEN }}
+          # Secretos para correo (por si los necesitaras en el futuro)
+          EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
         run: python scripts/check_annexes.py
-
       - name: Commit & Push if changed
         run: |
           git config user.name "github-actions[bot]"
