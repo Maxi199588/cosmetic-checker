@@ -1,4 +1,4 @@
-import streamlit as st
+, ParagraphStyleimport streamlit as st
 import pandas as pd
 import re
 import os
@@ -10,7 +10,7 @@ from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Table, TableStyle, Spacer, PageBreak
 )
 from reportlab.lib.pagesizes import letter, landscape
-from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 from reportlab.lib.units import inch
 
@@ -21,74 +21,57 @@ def generar_reporte_pdf(resultados):
     buffer = BytesIO()
     doc = SimpleDocTemplate(
         buffer,
-        pagesize=landscape(letter),
-        leftMargin=0.5*inch, rightMargin=0.5*inch,
-        topMargin=0.75*inch, bottomMargin=0.75*inch
+        pagesize=letter,
+        leftMargin=1*inch, rightMargin=1*inch,
+        topMargin=1*inch, bottomMargin=1*inch
     )
     styles = getSampleStyleSheet()
-    elementos = []
+    normal = styles['Normal']
+    h2     = styles['Heading2']
+    h3     = styles['Heading3']
+    bold   = ParagraphStyle(name='Bold', parent=normal, fontName='Helvetica-Bold')
 
-    # Título general
+    elementos = []
+    # Título
     elementos.append(Paragraph(
         "Reporte de Búsqueda de CAS en Anexos de Restricciones",
         styles['Title']
     ))
     elementos.append(Spacer(1, 12))
 
-    page_width, _ = landscape(letter)
-    usable_width = page_width - doc.leftMargin - doc.rightMargin
-
     primera = True
     for cas_num, res in resultados.items():
-        # Salto de página entre cada CAS
+        # salto de página entre cada CAS, excepto antes del primero
         if not primera:
             elementos.append(PageBreak())
         primera = False
 
-        elementos.append(Paragraph(f"<b>CAS {cas_num}</b>", styles['Heading2']))
+        # Encabezado CAS
+        elementos.append(Paragraph(f"CAS: {cas_num}", h2))
         elementos.append(Spacer(1, 6))
 
         if not res["encontrado"]:
-            elementos.append(Paragraph("No encontrado en ningún anexo.", styles['Normal']))
+            elementos.append(Paragraph("No encontrado en ningún anexo.", normal))
             elementos.append(Spacer(1, 12))
             continue
 
+        # Para cada anexo donde se encontró
         for anexo in res["anexos"]:
-            elementos.append(Paragraph(anexo['nombre'], styles['Heading3']))
+            elementos.append(Paragraph(anexo['nombre'], h3))
+            elementos.append(Spacer(1, 4))
+
             df = anexo['data'].reset_index(drop=True)
-            header = df.columns.tolist()
-            rows = df.values.tolist()
-
-            # **1 fila por tabla** para asegurar que nada exceda la página
-            for row in rows:
-                data = [header, row]
-
-                # calcular anchos
-                col_count = len(header)
-                col_width = usable_width / col_count
-                col_widths = [col_width]*col_count
-
-                # envolver en Paragraph
-                wrapped = [
-                    [Paragraph(str(cell) if cell is not None else "", styles['BodyText'])
-                     for cell in data[0]],
-                    [Paragraph(str(cell) if cell is not None else "", styles['BodyText'])
-                     for cell in data[1]]
-                ]
-
-                tbl = Table(wrapped, colWidths=col_widths, repeatRows=1)
-                tbl.setStyle(TableStyle([
-                    ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#d3d3d3")),
-                    ('GRID',       (0,0), (-1,-1), 0.25, colors.black),
-                    ('FONTNAME',   (0,0), (-1,0), 'Helvetica-Bold'),
-                    ('FONTSIZE',   (0,0), (-1,-1), 9),
-                    ('VALIGN',     (0,0), (-1,-1), 'TOP'),
-                ]))
-                elementos.append(tbl)
+            # Por cada fila del DataFrame
+            for _, row in df.iterrows():
+                # Para cada par columna→valor
+                for col, val in row.items():
+                    texto = f"<b>{col}:</b> {'' if pd.isna(val) else val}"
+                    elementos.append(Paragraph(texto, normal))
+                    elementos.append(Spacer(1, 2))
+                # separación entre filas
                 elementos.append(Spacer(1, 6))
-                # siempre un PageBreak tras cada mini-tabla
-                elementos.append(PageBreak())
 
+    # Construir el PDF
     doc.build(elementos)
     pdf = buffer.getvalue()
     buffer.close()
