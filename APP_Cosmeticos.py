@@ -6,7 +6,9 @@ import requests
 import time
 import json
 from io import BytesIO
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, TableStyle, Spacer
+from reportlab.platypus import (
+    SimpleDocTemplate, Paragraph, Table, TableStyle, Spacer, PageBreak
+)
 from reportlab.lib.pagesizes import letter, landscape
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib import colors
@@ -17,7 +19,6 @@ from reportlab.lib.units import inch
 # -----------------------------------------------------------
 def generar_reporte_pdf(resultados):
     buffer = BytesIO()
-    # Letter en orientación landscape
     doc = SimpleDocTemplate(
         buffer,
         pagesize=landscape(letter),
@@ -26,32 +27,52 @@ def generar_reporte_pdf(resultados):
     )
     styles = getSampleStyleSheet()
     elementos = []
+
+    # Título
     elementos.append(Paragraph(
         "Reporte de Búsqueda de CAS en Anexos de Restricciones",
         styles['Title']
     ))
     elementos.append(Spacer(1, 12))
 
-    # Ancho utilizable en landscape
+    # Ancho disponible para tablas
     page_width, _ = landscape(letter)
     usable_width = page_width - doc.leftMargin - doc.rightMargin
 
+    # Para cada CAS y sus resultados
     for cas_num, res in resultados.items():
+        # Añadimos salto de página si no es el primer CAS
+        if elementos[-1] is not None:
+            elementos.append(PageBreak())
+
         elementos.append(Paragraph(f"<b>CAS {cas_num}</b>", styles['Heading2']))
         elementos.append(Spacer(1, 6))
 
-        if res["encontrado"]:
-            for anexo in res["anexos"]:
-                elementos.append(Paragraph(anexo['nombre'], styles['Heading3']))
-                df = anexo['data'].reset_index(drop=True)
-                data = [df.columns.tolist()] + df.values.tolist()
+        if not res["encontrado"]:
+            elementos.append(Paragraph("No encontrado en ningún anexo.", styles['Normal']))
+            elementos.append(Spacer(1, 12))
+            continue
 
-                # Calcular anchos de columna equitativos
-                ncols = len(data[0])
+        # Para cada anexo donde apareció
+        for anexo in res["anexos"]:
+            elementos.append(Paragraph(anexo['nombre'], styles['Heading3']))
+            df = anexo['data'].reset_index(drop=True)
+
+            header = df.columns.tolist()
+            rows = df.values.tolist()
+
+            # Dividir en bloques de 25 filas
+            max_rows = 25
+            for start in range(0, len(rows), max_rows):
+                chunk = rows[start:start+max_rows]
+                data = [header] + chunk
+
+                # Calcular anchos equitativos
+                ncols = len(header)
                 col_width = usable_width / ncols
                 col_widths = [col_width] * ncols
 
-                # Envolver cada celda en un Paragraph para permitir wrap
+                # Envolver cada celda en Paragraph para wrap
                 wrapped = []
                 for row in data:
                     wr = []
@@ -60,25 +81,18 @@ def generar_reporte_pdf(resultados):
                         wr.append(Paragraph(txt, styles['BodyText']))
                     wrapped.append(wr)
 
-                tbl = Table(
-                    wrapped,
-                    colWidths=col_widths,
-                    repeatRows=1
-                )
+                tbl = Table(wrapped, colWidths=col_widths, repeatRows=1)
                 tbl.setStyle(TableStyle([
                     ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#d3d3d3")),
                     ('GRID',       (0,0), (-1,-1), 0.25, colors.black),
                     ('FONTNAME',   (0,0), (-1,0), 'Helvetica-Bold'),
-                    ('FONTSIZE',   (0,0), (-1,-1), 9),      # Tamaño de letra 9
+                    ('FONTSIZE',   (0,0), (-1,-1), 9),
                     ('VALIGN',     (0,0), (-1,-1), 'TOP'),
                 ]))
                 elementos.append(tbl)
                 elementos.append(Spacer(1, 12))
 
-        else:
-            elementos.append(Paragraph("No encontrado en ningún anexo.", styles['Normal']))
-            elementos.append(Spacer(1, 12))
-
+    # Construir PDF
     doc.build(elementos)
     pdf = buffer.getvalue()
     buffer.close()
