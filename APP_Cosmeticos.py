@@ -5,6 +5,11 @@ import os
 import requests
 import time
 import json
+from io import BytesIO
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, TableStyle, Spacer
+from reportlab.lib.pagesizes import letter
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib import colors
 
 # -----------------------------------------------------------
 # TÍTULO E INTRODUCCIÓN DE LA APLICACIÓN
@@ -19,102 +24,193 @@ Esta aplicación permite:
 """)
 
 # -----------------------------------------------------------
+# FUNCIÓN PARA GENERAR REPORTE PDF
+# -----------------------------------------------------------
+def generar_reporte_pdf(resultados):
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter)
+    styles = getSampleStyleSheet()
+    elementos = []
+    elementos.append(Paragraph("Reporte de Búsqueda de CAS en Anexos de Restricciones", styles['Title']))
+    elementos.append(Spacer(1, 12))
+
+    for cas_num, res in resultados.items():
+        elementos.append(Paragraph(f"<b>CAS {cas_num}</b>", styles['Heading2']))
+        if res["encontrado"]:
+            for anexo in res["anexos"]:
+                elementos.append(Paragraph(f"{anexo['nombre']}", styles['Heading3']))
+                df = anexo['data'].reset_index(drop=True)
+                data = [df.columns.tolist()] + df.values.tolist()
+                tbl = Table(data, repeatRows=1)
+                tbl.setStyle(TableStyle([
+                    ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#d3d3d3")),
+                    ('GRID', (0,0), (-1,-1), 0.25, colors.black),
+                    ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                    ('VALIGN', (0,0), (-1,-1), 'TOP'),
+                ]))
+                elementos.append(tbl)
+                elementos.append(Spacer(1, 12))
+        else:
+            elementos.append(Paragraph("No encontrado en ningún anexo.", styles['Normal']))
+            elementos.append(Spacer(1, 12))
+
+    doc.build(elementos)
+    pdf = buffer.getvalue()
+    buffer.close()
+    return pdf
+
+# -----------------------------------------------------------
 # FUNCIÓN PARA CARGAR LOS ARCHIVOS
 # -----------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def load_data():
-    # Verifica si estamos en Streamlit Cloud o local
     is_cloud = os.environ.get('STREAMLIT_SHARING', '') == 'true'
-    
-    if is_cloud:
-        # Rutas para Streamlit Cloud (relativas al repositorio)
-        base_path = "."
-    else:
-        # Rutas para ejecución local
-        base_path = os.path.dirname(os.path.abspath(__file__))
-    
+    base_path = "." if is_cloud else os.path.dirname(os.path.abspath(__file__))
     cas_folder = os.path.join(base_path, "CAS")
     restricciones_folder = os.path.join(base_path, "RESTRICCIONES")
 
-    # Rutas a los archivos Excel de los anexos
     annex_ii_path  = os.path.join(restricciones_folder, "COSING_Annex_II_v2.xlsx")
     annex_iii_path = os.path.join(restricciones_folder, "COSING_Annex_III_v2.xlsx")
     annex_iv_path  = os.path.join(restricciones_folder, "COSING_Annex_IV_v2.xlsx")
     annex_v_path   = os.path.join(restricciones_folder, "COSING_Annex_V_v2.xlsx")
     annex_vi_path  = os.path.join(restricciones_folder, "COSING_Annex_VI_v2.xlsx")
-    
-    # Ruta al documento CAS
-    cas_db_path = os.path.join(cas_folder, "COSING_Ingredients-Fragrance Inventory_v2.xlsx")
-    
-    # Inicializar DataFrames vacíos
-    annex_ii = pd.DataFrame()
-    annex_iii = pd.DataFrame()
-    annex_iv = pd.DataFrame()
-    annex_v = pd.DataFrame()
-    annex_vi = pd.DataFrame()
+    mercosur_path  = os.path.join(restricciones_folder, "07 MERCOSUR_062_2014_PROHIBIDAS.xlsx")
+    cas_db_path    = os.path.join(cas_folder, "COSING_Ingredients-Fragrance Inventory_v2.xlsx")
+
+    annex_ii = annex_iii = annex_iv = annex_v = annex_vi = mercosur = pd.DataFrame()
     cas_db = pd.DataFrame()
-    
-    # Información de carga para mostrar al usuario
     info_carga = []
-    
+
     # Cargar Annex II
     try:
         info_carga.append(f"Cargando {annex_ii_path}...")
         annex_ii = pd.read_excel(annex_ii_path, skiprows=7, header=0, engine="openpyxl")
         annex_ii.columns = annex_ii.columns.str.strip()
-        info_carga.append(f"✅ Annex II cargado correctamente: {len(annex_ii)} filas")
-        info_carga.append(f"Columnas en Annex II: {', '.join(annex_ii.columns.tolist())}")
+        info_carga.append(f"✅ Annex II: {len(annex_ii)} filas")
     except Exception as e:
-        info_carga.append(f"❌ Error cargando Annex II: {e}")
-        annex_ii = pd.DataFrame()
+        info_carga.append(f"❌ Error Annex II: {e}")
 
-    # Cargar el resto de anexos
+    # Cargar Annex III a VI
+    for name, path, var in [
+        ("Annex III", annex_iii_path, 'annex_iii'),
+        ("Annex IV", annex_iv_path,  'annex_iv'),
+        ("Annex V", annex_v_path,   'annex_v'),
+        ("Annex VI", annex_vi_path,  'annex_vi')
+    ]:
+        try:
+            df = pd.read_excel(path, skiprows=7, header=0, engine="openpyxl")
+            df.columns = df.columns.str.strip()
+            locals()[var] = df
+            info_carga.append(f"✅ {name}: {len(df)} filas")
+        except Exception as e:
+            info_carga.append(f"❌ Error {name}: {e}")
+
+    # Cargar MERCOSUR Prohibidas (fila 6, columna CAS LIMPIO)
     try:
-        annex_iii = pd.read_excel(annex_iii_path, skiprows=7, header=0, engine="openpyxl")
-        annex_iii.columns = annex_iii.columns.str.strip()
-        info_carga.append(f"✅ Annex III cargado: {len(annex_iii)} filas")
+        mercosur = pd.read_excel(mercosur_path, skiprows=5, header=0, engine="openpyxl")
+        mercosur.columns = mercosur.columns.str.strip()
+        info_carga.append(f"✅ MERCOSUR Prohibidas: {len(mercosur)} filas")
     except Exception as e:
-        info_carga.append(f"❌ Error cargando Annex III: {e}")
-        annex_iii = pd.DataFrame()
+        info_carga.append(f"❌ Error MERCOSUR Prohibidas: {e}")
 
-    try:
-        annex_iv = pd.read_excel(annex_iv_path, skiprows=7, header=0, engine="openpyxl")
-        annex_iv.columns = annex_iv.columns.str.strip()
-        info_carga.append(f"✅ Annex IV cargado: {len(annex_iv)} filas")
-    except Exception as e:
-        info_carga.append(f"❌ Error cargando Annex IV: {e}")
-        annex_iv = pd.DataFrame()
-
-    try:
-        annex_v = pd.read_excel(annex_v_path, skiprows=7, header=0, engine="openpyxl")
-        annex_v.columns = annex_v.columns.str.strip()
-        info_carga.append(f"✅ Annex V cargado: {len(annex_v)} filas")
-    except Exception as e:
-        info_carga.append(f"❌ Error cargando Annex V: {e}")
-        annex_v = pd.DataFrame()
-
-    try:
-        annex_vi = pd.read_excel(annex_vi_path, skiprows=7, header=0, engine="openpyxl")
-        annex_vi.columns = annex_vi.columns.str.strip()
-        info_carga.append(f"✅ Annex VI cargado: {len(annex_vi)} filas")
-    except Exception as e:
-        info_carga.append(f"❌ Error cargando Annex VI: {e}")
-        annex_vi = pd.DataFrame()
-
-    # Leer el documento CAS en Excel
+    # Cargar base CAS
     try:
         cas_db = pd.read_excel(cas_db_path, skiprows=7, header=0, engine="openpyxl")
         cas_db.columns = cas_db.columns.str.strip()
-        
         if "INCI name" in cas_db.columns:
             cas_db.rename(columns={"INCI name": "Ingredient"}, inplace=True)
-            
-        info_carga.append(f"✅ Base de datos CAS cargada: {len(cas_db)} filas")
+        info_carga.append(f"✅ Base CAS: {len(cas_db)} filas")
     except Exception as e:
-        info_carga.append(f"❌ Error cargando base de datos CAS: {e}")
-        cas_db = pd.DataFrame()
-    
-    return annex_ii, annex_iii, annex_iv, annex_v, annex_vi, cas_db, info_carga
+        info_carga.append(f"❌ Error base CAS: {e}")
+
+    return annex_ii, annex_iii, annex_iv, annex_v, annex_vi, mercosur, cas_db, info_carga
+
+# -----------------------------------------------------------
+# Resto de funciones: buscar en PubChem, restricciones, etc.
+# (idénticas a tu script original)
+# -----------------------------------------------------------
+# [...] (omitidas aquí para brevedad en este extracto)
+
+# -----------------------------------------------------------
+# CARGA DE DATOS y PREPARACIÓN de anexos
+# -----------------------------------------------------------
+annex_ii, annex_iii, annex_iv, annex_v, annex_vi, mercosur, cas_db, info_carga = load_data()
+annex_data = {
+    "Annex II": annex_ii,
+    "Annex III": annex_iii,
+    "Annex IV": annex_iv,
+    "Annex V": annex_v,
+    "Annex VI": annex_vi,
+    "MERCOSUR Prohibidas": mercosur
+}
+
+# -----------------------------------------------------------
+# SECCIÓN: Búsqueda por fórmula de ingredientes (actualizada)
+# -----------------------------------------------------------
+modo_busqueda = st.sidebar.selectbox(
+    "Seleccione el método de búsqueda",
+    [
+        "Búsqueda por fórmula de ingredientes",
+        "Búsqueda en restricciones por CAS",
+        "Búsqueda en PubChem"
+    ]
+)
+
+if modo_busqueda == "Búsqueda por fórmula de ingredientes":
+    st.header("Búsqueda por fórmula de ingredientes")
+    st.write("Ingrese la lista de ingredientes separados por comas o por líneas:")
+    formula_input = st.text_area("Ingredientes:")
+    tipo_busqueda = st.radio("Tipo de búsqueda", ["Aproximada", "Exacta"])
+
+    if st.button("Buscar Fórmula"):
+        ingredientes = [ing.strip() for ing in re.split(r'[\n,]+', formula_input) if ing.strip()]
+        exact_search = tipo_busqueda == "Exacta"
+        df_resultado_formula = buscar_ingredientes_por_nombre(ingredientes, exact=exact_search)
+        st.session_state["df_resultado_formula"] = df_resultado_formula
+        st.session_state["ingredientes"] = ingredientes
+
+    if "df_resultado_formula" in st.session_state:
+        df = st.session_state["df_resultado_formula"]
+        # columna CAS detectada...
+        cas_column = next((c for c in ["CAS", "CAS No", "CAS_number"] if c in df.columns), None)
+        if not df.empty:
+            df_edit = df.copy()
+            df_edit["Seleccionar"] = False
+            cols = ["Seleccionar"] + [c for c in df_edit.columns if c != "Seleccionar"]
+            df_edit = df_edit[cols]
+            df_editado = st.data_editor(
+                df_edit,
+                column_config={
+                    "Seleccionar": st.column_config.CheckboxColumn(label="Seleccionar")
+                }, use_container_width=True, key="data_editor_cas"
+            )
+            if st.button("Buscar seleccionados en restricciones"):
+                seleccionadas = df_editado[df_editado["Seleccionar"]]
+                if not seleccionadas.empty and cas_column:
+                    cas_sel = seleccionadas[cas_column].dropna().astype(str).tolist()
+                    resultados = buscar_cas_en_restricciones(cas_sel, mostrar_info=False)
+                    st.subheader("Resultados en listados de restricciones")
+                    for cas_num, res in resultados.items():
+                        if res["encontrado"]:
+                            st.markdown(f"### CAS: {cas_num}")
+                            for anexo in res["anexos"]:
+                                st.write(f"**{anexo['nombre']}**")
+                                st.dataframe(anexo['data'])
+                                st.markdown("---")
+                        else:
+                            st.warning(f"⚠️ {cas_num} no está en ningún anexo")
+                    st.session_state["ult_resultados_restricciones"] = resultados
+                    pdf_bytes = generar_reporte_pdf(resultados)
+                    st.download_button(
+                        label="📥 Descargar reporte en PDF",
+                        data=pdf_bytes,
+                        file_name="reporte_cas_restricciones.pdf",
+                        mime="application/pdf"
+                    )
+                else:
+                    st.warning("Selecciona al menos un CAS para buscar.")
+        else:
+            st.info("No se encontraron coincidencias en la base CAS.")
 
 # -----------------------------------------------------------
 # FUNCIÓN PARA BÚSQUEDA EN PUBCHEM POR CAS
@@ -546,15 +642,16 @@ def mostrar_info_pubchem(pubchem_data):
 # -----------------------------------------------------------
 # CARGA DE DATOS
 # -----------------------------------------------------------
-annex_ii, annex_iii, annex_iv, annex_v, annex_vi, cas_db, info_carga = load_data()
+annex_ii, annex_iii, annex_iv, annex_v, annex_vi, mercosur, cas_db, info_carga = load_data()
 
 # Diccionario para manejar los anexos de forma más fácil
 annex_data = {
     "Annex II": annex_ii,
     "Annex III": annex_iii,
-    "Annex IV": annex_iv, 
+    "Annex IV": annex_iv,
     "Annex V": annex_v,
-    "Annex VI": annex_vi
+    "Annex VI": annex_vi,
+    "MERCOSUR Prohibidas": mercosur
 }
 
 # -----------------------------------------------------------
