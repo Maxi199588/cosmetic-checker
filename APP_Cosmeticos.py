@@ -666,87 +666,85 @@ modo_busqueda = st.sidebar.selectbox(
     ]
 )
 
-# ------------------------------------------------------------------------
-# 2. Búsqueda por fórmula de ingredientes
-# ------------------------------------------------------------------------
+# -----------------------------------------------------------
+# SECCIÓN: Búsqueda por fórmula de ingredientes (actualizada)
+# -----------------------------------------------------------
 if modo_busqueda == "Búsqueda por fórmula de ingredientes":
     st.header("Búsqueda por fórmula de ingredientes")
     st.write("Ingrese la lista de ingredientes separados por comas o por líneas:")
     formula_input = st.text_area("Ingredientes:")
-
-    # Agregar selector para elegir búsqueda exacta o aproximada
     tipo_busqueda = st.radio("Tipo de búsqueda", ["Aproximada", "Exacta"])
 
-    # Cuando se pulsa "Buscar Fórmula", se realiza la búsqueda y se almacenan los resultados
+    # 1) Botón para ejecutar la búsqueda en la base CAS
     if st.button("Buscar Fórmula"):
-        if formula_input.strip():
-            # Procesar la entrada para obtener la lista de ingredientes
-            ingredientes = re.split(r'[\n,]+', formula_input)
-            ingredientes = [ing.strip() for ing in ingredientes if ing.strip()]
-            st.write("Ingredientes detectados:")
-            st.write(ingredientes)
+        ingredientes = [ing.strip() for ing in re.split(r'[\n,]+', formula_input) if ing.strip()]
+        exact_search = (tipo_busqueda == "Exacta")
+        df_resultado_formula = buscar_ingredientes_por_nombre(ingredientes, exact=exact_search)
+        st.session_state["df_resultado_formula"] = df_resultado_formula
+        st.session_state["ingredientes"] = ingredientes
 
-            exact_search = True if tipo_busqueda == "Exacta" else False
-            df_resultado_formula = buscar_ingredientes_por_nombre(ingredientes, exact=exact_search)
-            # Almacenar los resultados y la lista de ingredientes en session_state
-            st.session_state["df_resultado_formula"] = df_resultado_formula
-            st.session_state["ingredientes"] = ingredientes
-        else:
-            st.warning("Ingrese una lista de ingredientes válida.")
+    # 2) Mostrar resultados de la búsqueda en CAS con checkboxes
+    if "df_resultado_formula" in st.session_state:
+        df = st.session_state["df_resultado_formula"]
+        # Detectar la columna que contiene el CAS
+        cas_column = next((c for c in ["CAS", "CAS No", "CAS_number"] if c in df.columns), None)
 
-    # Si ya se realizó la búsqueda, se muestran los resultados almacenados
-    if "df_resultado_formula" in st.session_state and st.session_state["df_resultado_formula"] is not None:
-        df_resultado_formula = st.session_state["df_resultado_formula"]
-        if not df_resultado_formula.empty:
+        if not df.empty:
             st.subheader("Búsqueda en la base de datos CAS")
-            # Detectar la columna que contiene los números de CAS (según posibles nombres)
-            cas_column_candidates = ["CAS", "CAS No", "CAS_number"]
-            cas_column = None
-            for col in cas_column_candidates:
-                if col in df_resultado_formula.columns:
-                    cas_column = col
-                    break
-
-            # Añadir columna de selección (inicialmente en False) y reordenar para que aparezca primero
-            df_edit = df_resultado_formula.copy()
+            # Preparamos la tabla editable
+            df_edit = df.copy()
             df_edit["Seleccionar"] = False
-            cols = list(df_edit.columns)
-            cols.remove("Seleccionar")
-            cols.insert(0, "Seleccionar")
+            cols = ["Seleccionar"] + [c for c in df_edit.columns if c != "Seleccionar"]
             df_edit = df_edit[cols]
 
-            # Mostrar la tabla editable con checkboxes usando st.data_editor
             df_editado = st.data_editor(
                 df_edit,
                 column_config={
-                    "Seleccionar": st.column_config.CheckboxColumn(
-                        label="Seleccionar",
-                        help="Marque para copiar este CAS"
-                    )
+                    "Seleccionar": st.column_config.CheckboxColumn(label="Seleccionar")
                 },
                 use_container_width=True,
                 key="data_editor_cas"
             )
 
-            # Botón para copiar los números de CAS de las filas seleccionadas
-            if st.button("Copiar números de CAS seleccionados"):
-                if cas_column:
-                    seleccionadas = df_editado[df_editado["Seleccionar"] == True]
-                    if not seleccionadas.empty:
-                        cas_seleccionados = seleccionadas[cas_column].dropna().astype(str).tolist()
-                        cas_text = "\n".join(cas_seleccionados)
-                        st.text_area("Copie estos números de CAS:", cas_text, height=150)
-                    else:
-                        st.warning("No se ha seleccionado ninguna fila.")
+            # 3) Nuevo botón: buscar directamente en los anexos restringidos
+            if st.button("Buscar seleccionados en restricciones"):
+                # Filtrar filas marcadas
+                seleccionadas = df_editado[df_editado["Seleccionar"] == True]
+                if seleccionadas.empty or cas_column is None:
+                    st.warning("Selecciona al menos un CAS para buscar.")
                 else:
-                    st.warning("No se encontró ninguna columna de CAS en los resultados.")
+                    # Extraer lista de CAS y lanzar búsqueda
+                    cas_sel = seleccionadas[cas_column].dropna().astype(str).tolist()
+                    resultados = buscar_cas_en_restricciones(cas_sel, mostrar_info=False)
+
+                    # Mostrar en pantalla
+                    st.subheader("Resultados en listados de restricciones")
+                    for cas_num, res in resultados.items():
+                        if res["encontrado"]:
+                            st.markdown(f"### CAS: {cas_num}")
+                            for anexo in res["anexos"]:
+                                st.write(f"**{anexo['nombre']}**")
+                                st.dataframe(anexo["data"])
+                                st.markdown("---")
+                        else:
+                            st.warning(f"⚠️ {cas_num} no está en ningún anexo")
+
+                    # Guardamos para el PDF y ofrecemos descarga
+                    st.session_state["ult_resultados_restricciones"] = resultados
+                    pdf_bytes = generar_reporte_pdf(resultados)
+                    st.download_button(
+                        label="📥 Descargar reporte en PDF",
+                        data=pdf_bytes,
+                        file_name="reporte_cas_restricciones.pdf",
+                        mime="application/pdf"
+                    )
+
         else:
-            st.info("No se encontraron coincidencias en la base de datos CAS para los ingredientes ingresados.")
+            st.info("No se encontraron coincidencias en la base CAS.")
 
-        # Opción para copiar toda la fórmula
-        st.subheader("Copiar fórmula completa")
-        st.text_area("Fórmula completa", formula_input, height=150)
-
+    # 4) Siempre mostramos la fórmula completa al final
+    st.subheader("Copiar fórmula completa")
+    st.text_area("Fórmula completa", formula_input, height=150)
 # ------------------------------------------------------------------------
 # 3. Búsqueda en listados de restricciones por CAS (como opción principal)
 # ------------------------------------------------------------------------
