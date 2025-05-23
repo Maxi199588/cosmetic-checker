@@ -12,18 +12,6 @@ from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib import colors
 
 # -----------------------------------------------------------
-# TÍTULO E INTRODUCCIÓN DE LA APLICACIÓN
-# -----------------------------------------------------------
-st.title("Cosmetic Ingredient Checker")
-st.write("""
-Esta aplicación permite:
-- Buscar en la base de datos de números CAS.
-- Consultar en los listados de sustancias permitidas o prohibidas (anexos COSING).
-- Revisar fórmulas completas (lista de ingredientes) y extraer la información asociada.
-- Consultar información en PubChem.
-""")
-
-# -----------------------------------------------------------
 # FUNCIÓN PARA GENERAR REPORTE PDF
 # -----------------------------------------------------------
 def generar_reporte_pdf(resultados):
@@ -38,7 +26,7 @@ def generar_reporte_pdf(resultados):
         elementos.append(Paragraph(f"<b>CAS {cas_num}</b>", styles['Heading2']))
         if res["encontrado"]:
             for anexo in res["anexos"]:
-                elementos.append(Paragraph(f"{anexo['nombre']}", styles['Heading3']))
+                elementos.append(Paragraph(anexo['nombre'], styles['Heading3']))
                 df = anexo['data'].reset_index(drop=True)
                 data = [df.columns.tolist()] + df.values.tolist()
                 tbl = Table(data, repeatRows=1)
@@ -60,157 +48,57 @@ def generar_reporte_pdf(resultados):
     return pdf
 
 # -----------------------------------------------------------
-# FUNCIÓN PARA CARGAR LOS ARCHIVOS
+# FUNCIÓN PARA CARGAR TODOS LOS ARCHIVOS
 # -----------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def load_data():
     is_cloud = os.environ.get('STREAMLIT_SHARING', '') == 'true'
     base_path = "." if is_cloud else os.path.dirname(os.path.abspath(__file__))
-    cas_folder = os.path.join(base_path, "CAS")
-    restricciones_folder = os.path.join(base_path, "RESTRICCIONES")
+    restr_path = os.path.join(base_path, "RESTRICCIONES")
+    cas_path   = os.path.join(base_path, "CAS", "COSING_Ingredients-Fragrance Inventory_v2.xlsx")
 
-    annex_ii_path  = os.path.join(restricciones_folder, "COSING_Annex_II_v2.xlsx")
-    annex_iii_path = os.path.join(restricciones_folder, "COSING_Annex_III_v2.xlsx")
-    annex_iv_path  = os.path.join(restricciones_folder, "COSING_Annex_IV_v2.xlsx")
-    annex_v_path   = os.path.join(restricciones_folder, "COSING_Annex_V_v2.xlsx")
-    annex_vi_path  = os.path.join(restricciones_folder, "COSING_Annex_VI_v2.xlsx")
-    mercosur_path  = os.path.join(restricciones_folder, "07 MERCOSUR_062_2014_PROHIBIDAS.xlsx")
-    cas_db_path    = os.path.join(cas_folder, "COSING_Ingredients-Fragrance Inventory_v2.xlsx")
-
-    annex_ii = annex_iii = annex_iv = annex_v = annex_vi = mercosur = pd.DataFrame()
-    cas_db = pd.DataFrame()
     info_carga = []
 
-    # Cargar Annex II
-    try:
-        info_carga.append(f"Cargando {annex_ii_path}...")
-        annex_ii = pd.read_excel(annex_ii_path, skiprows=7, header=0, engine="openpyxl")
-        annex_ii.columns = annex_ii.columns.str.strip()
-        info_carga.append(f"✅ Annex II: {len(annex_ii)} filas")
-    except Exception as e:
-        info_carga.append(f"❌ Error Annex II: {e}")
-
-    # Cargar Annex III a VI
-    for name, path, var in [
-        ("Annex III", annex_iii_path, 'annex_iii'),
-        ("Annex IV", annex_iv_path,  'annex_iv'),
-        ("Annex V", annex_v_path,   'annex_v'),
-        ("Annex VI", annex_vi_path,  'annex_vi')
-    ]:
+    # Carga de Annexes II a VI
+    def load_annex(name, filename, skip):
+        df = pd.DataFrame()
+        path = os.path.join(restr_path, filename)
         try:
-            df = pd.read_excel(path, skiprows=7, header=0, engine="openpyxl")
+            df = pd.read_excel(path, skiprows=skip, header=0, engine="openpyxl")
             df.columns = df.columns.str.strip()
-            locals()[var] = df
             info_carga.append(f"✅ {name}: {len(df)} filas")
         except Exception as e:
             info_carga.append(f"❌ Error {name}: {e}")
+        return df
 
-    # Cargar MERCOSUR Prohibidas (fila 6, columna CAS LIMPIO)
+    annex_ii  = load_annex("Annex II",  "COSING_Annex_II_v2.xlsx", 7)
+    annex_iii = load_annex("Annex III", "COSING_Annex_III_v2.xlsx",7)
+    annex_iv  = load_annex("Annex IV",  "COSING_Annex_IV_v2.xlsx", 7)
+    annex_v   = load_annex("Annex V",   "COSING_Annex_V_v2.xlsx",  7)
+    annex_vi  = load_annex("Annex VI",  "COSING_Annex_VI_v2.xlsx", 7)
+
+    # Carga de MERCOSUR Prohibidas (fila 6 → skiprows=5)
+    mercosur = pd.DataFrame()
     try:
-        mercosur = pd.read_excel(mercosur_path, skiprows=5, header=0, engine="openpyxl")
+        path = os.path.join(restr_path, "07 MERCOSUR_062_2014_PROHIBIDAS.xlsx")
+        mercosur = pd.read_excel(path, skiprows=5, header=0, engine="openpyxl")
         mercosur.columns = mercosur.columns.str.strip()
         info_carga.append(f"✅ MERCOSUR Prohibidas: {len(mercosur)} filas")
     except Exception as e:
         info_carga.append(f"❌ Error MERCOSUR Prohibidas: {e}")
 
-    # Cargar base CAS
+    # Carga de la base CAS
+    cas_db = pd.DataFrame()
     try:
-        cas_db = pd.read_excel(cas_db_path, skiprows=7, header=0, engine="openpyxl")
+        cas_db = pd.read_excel(cas_path, skiprows=7, header=0, engine="openpyxl")
         cas_db.columns = cas_db.columns.str.strip()
         if "INCI name" in cas_db.columns:
             cas_db.rename(columns={"INCI name": "Ingredient"}, inplace=True)
         info_carga.append(f"✅ Base CAS: {len(cas_db)} filas")
     except Exception as e:
-        info_carga.append(f"❌ Error base CAS: {e}")
+        info_carga.append(f"❌ Error Base CAS: {e}")
 
     return annex_ii, annex_iii, annex_iv, annex_v, annex_vi, mercosur, cas_db, info_carga
-
-# -----------------------------------------------------------
-# Resto de funciones: buscar en PubChem, restricciones, etc.
-# (idénticas a tu script original)
-# -----------------------------------------------------------
-# [...] (omitidas aquí para brevedad en este extracto)
-
-# -----------------------------------------------------------
-# CARGA DE DATOS y PREPARACIÓN de anexos
-# -----------------------------------------------------------
-annex_ii, annex_iii, annex_iv, annex_v, annex_vi, mercosur, cas_db, info_carga = load_data()
-annex_data = {
-    "Annex II": annex_ii,
-    "Annex III": annex_iii,
-    "Annex IV": annex_iv,
-    "Annex V": annex_v,
-    "Annex VI": annex_vi,
-    "MERCOSUR Prohibidas": mercosur
-}
-
-# -----------------------------------------------------------
-# SECCIÓN: Búsqueda por fórmula de ingredientes (actualizada)
-# -----------------------------------------------------------
-modo_busqueda = st.sidebar.selectbox(
-    "Seleccione el método de búsqueda",
-    [
-        "Búsqueda por fórmula de ingredientes",
-        "Búsqueda en restricciones por CAS",
-        "Búsqueda en PubChem"
-    ]
-)
-
-if modo_busqueda == "Búsqueda por fórmula de ingredientes":
-    st.header("Búsqueda por fórmula de ingredientes")
-    st.write("Ingrese la lista de ingredientes separados por comas o por líneas:")
-    formula_input = st.text_area("Ingredientes:")
-    tipo_busqueda = st.radio("Tipo de búsqueda", ["Aproximada", "Exacta"])
-
-    if st.button("Buscar Fórmula"):
-        ingredientes = [ing.strip() for ing in re.split(r'[\n,]+', formula_input) if ing.strip()]
-        exact_search = tipo_busqueda == "Exacta"
-        df_resultado_formula = buscar_ingredientes_por_nombre(ingredientes, exact=exact_search)
-        st.session_state["df_resultado_formula"] = df_resultado_formula
-        st.session_state["ingredientes"] = ingredientes
-
-    if "df_resultado_formula" in st.session_state:
-        df = st.session_state["df_resultado_formula"]
-        # columna CAS detectada...
-        cas_column = next((c for c in ["CAS", "CAS No", "CAS_number"] if c in df.columns), None)
-        if not df.empty:
-            df_edit = df.copy()
-            df_edit["Seleccionar"] = False
-            cols = ["Seleccionar"] + [c for c in df_edit.columns if c != "Seleccionar"]
-            df_edit = df_edit[cols]
-            df_editado = st.data_editor(
-                df_edit,
-                column_config={
-                    "Seleccionar": st.column_config.CheckboxColumn(label="Seleccionar")
-                }, use_container_width=True, key="data_editor_cas"
-            )
-            if st.button("Buscar seleccionados en restricciones"):
-                seleccionadas = df_editado[df_editado["Seleccionar"]]
-                if not seleccionadas.empty and cas_column:
-                    cas_sel = seleccionadas[cas_column].dropna().astype(str).tolist()
-                    resultados = buscar_cas_en_restricciones(cas_sel, mostrar_info=False)
-                    st.subheader("Resultados en listados de restricciones")
-                    for cas_num, res in resultados.items():
-                        if res["encontrado"]:
-                            st.markdown(f"### CAS: {cas_num}")
-                            for anexo in res["anexos"]:
-                                st.write(f"**{anexo['nombre']}**")
-                                st.dataframe(anexo['data'])
-                                st.markdown("---")
-                        else:
-                            st.warning(f"⚠️ {cas_num} no está en ningún anexo")
-                    st.session_state["ult_resultados_restricciones"] = resultados
-                    pdf_bytes = generar_reporte_pdf(resultados)
-                    st.download_button(
-                        label="📥 Descargar reporte en PDF",
-                        data=pdf_bytes,
-                        file_name="reporte_cas_restricciones.pdf",
-                        mime="application/pdf"
-                    )
-                else:
-                    st.warning("Selecciona al menos un CAS para buscar.")
-        else:
-            st.info("No se encontraron coincidencias en la base CAS.")
 
 # -----------------------------------------------------------
 # FUNCIÓN PARA BÚSQUEDA EN PUBCHEM POR CAS
@@ -643,8 +531,6 @@ def mostrar_info_pubchem(pubchem_data):
 # CARGA DE DATOS
 # -----------------------------------------------------------
 annex_ii, annex_iii, annex_iv, annex_v, annex_vi, mercosur, cas_db, info_carga = load_data()
-
-# Diccionario para manejar los anexos de forma más fácil
 annex_data = {
     "Annex II": annex_ii,
     "Annex III": annex_iii,
@@ -655,8 +541,17 @@ annex_data = {
 }
 
 # -----------------------------------------------------------
-# SELECCIÓN DEL MODO DE BÚSQUEDA (sin opción de CAS)
+# INTERFAZ PRINCIPAL
 # -----------------------------------------------------------
+st.title("Cosmetic Ingredient Checker")
+st.write("""
+Esta aplicación permite:
+- Buscar en la base de datos de números CAS.
+- Consultar en los listados de sustancias permitidas o prohibidas (anexos COSING y MERCOSUR).
+- Revisar fórmulas completas (lista de ingredientes) y extraer la información asociada.
+- Consultar información en PubChem.
+""")
+
 modo_busqueda = st.sidebar.selectbox(
     "Seleccione el método de búsqueda",
     [
@@ -666,259 +561,92 @@ modo_busqueda = st.sidebar.selectbox(
     ]
 )
 
-# -----------------------------------------------------------
-# SECCIÓN: Búsqueda por fórmula de ingredientes (actualizada)
-# -----------------------------------------------------------
+# ------------------------------------------------------------------------
+# 1) Búsqueda por fórmula de ingredientes
+# ------------------------------------------------------------------------
 if modo_busqueda == "Búsqueda por fórmula de ingredientes":
     st.header("Búsqueda por fórmula de ingredientes")
-    st.write("Ingrese la lista de ingredientes separados por comas o por líneas:")
-    formula_input = st.text_area("Ingredientes:")
+    formula_input = st.text_area("Ingredientes (separados por comas o líneas):")
     tipo_busqueda = st.radio("Tipo de búsqueda", ["Aproximada", "Exacta"])
 
-    # 1) Botón para ejecutar la búsqueda en la base CAS
     if st.button("Buscar Fórmula"):
-        ingredientes = [ing.strip() for ing in re.split(r'[\n,]+', formula_input) if ing.strip()]
-        exact_search = (tipo_busqueda == "Exacta")
-        df_resultado_formula = buscar_ingredientes_por_nombre(ingredientes, exact=exact_search)
-        st.session_state["df_resultado_formula"] = df_resultado_formula
-        st.session_state["ingredientes"] = ingredientes
+        ingredientes = [i.strip() for i in re.split(r'[\n,]+', formula_input) if i.strip()]
+        df_res = buscar_ingredientes_por_nombre(ingredientes, exact=(tipo_busqueda=="Exacta"))
+        st.session_state["df_formula"] = df_res
 
-    # 2) Mostrar resultados de la búsqueda en CAS con checkboxes
-    if "df_resultado_formula" in st.session_state:
-        df = st.session_state["df_resultado_formula"]
-        # Detectar la columna que contiene el CAS
-        cas_column = next((c for c in ["CAS", "CAS No", "CAS_number"] if c in df.columns), None)
+    if "df_formula" in st.session_state:
+        df = st.session_state["df_formula"]
+        cas_col = next((c for c in ["CAS", "CAS No", "CAS_number"] if c in df.columns), None)
 
-        if not df.empty:
-            st.subheader("Búsqueda en la base de datos CAS")
-            # Preparamos la tabla editable
-            df_edit = df.copy()
-            df_edit["Seleccionar"] = False
-            cols = ["Seleccionar"] + [c for c in df_edit.columns if c != "Seleccionar"]
-            df_edit = df_edit[cols]
+        if not df.empty and cas_col:
+            df["Seleccionar"] = False
+            cols = ["Seleccionar"] + [c for c in df.columns if c!="Seleccionar"]
+            df = df[cols]
+            df_edit = st.data_editor(df, column_config={
+                "Seleccionar": st.column_config.CheckboxColumn(label="Seleccionar")
+            }, key="editor_formula")
 
-            df_editado = st.data_editor(
-                df_edit,
-                column_config={
-                    "Seleccionar": st.column_config.CheckboxColumn(label="Seleccionar")
-                },
-                use_container_width=True,
-                key="data_editor_cas"
-            )
-
-            # 3) Nuevo botón: buscar directamente en los anexos restringidos
             if st.button("Buscar seleccionados en restricciones"):
-                # Filtrar filas marcadas
-                seleccionadas = df_editado[df_editado["Seleccionar"] == True]
-                if seleccionadas.empty or cas_column is None:
-                    st.warning("Selecciona al menos un CAS para buscar.")
-                else:
-                    # Extraer lista de CAS y lanzar búsqueda
-                    cas_sel = seleccionadas[cas_column].dropna().astype(str).tolist()
+                marcados = df_edit[df_edit["Seleccionar"]]
+                cas_sel = marcados[cas_col].dropna().astype(str).tolist()
+                if cas_sel:
                     resultados = buscar_cas_en_restricciones(cas_sel, mostrar_info=False)
-
-                    # Mostrar en pantalla
                     st.subheader("Resultados en listados de restricciones")
-                    for cas_num, res in resultados.items():
+                    for cas_n, res in resultados.items():
                         if res["encontrado"]:
-                            st.markdown(f"### CAS: {cas_num}")
+                            st.markdown(f"### CAS {cas_n}")
                             for anexo in res["anexos"]:
                                 st.write(f"**{anexo['nombre']}**")
                                 st.dataframe(anexo["data"])
                                 st.markdown("---")
                         else:
-                            st.warning(f"⚠️ {cas_num} no está en ningún anexo")
-
-                    # Guardamos para el PDF y ofrecemos descarga
-                    st.session_state["ult_resultados_restricciones"] = resultados
-                    pdf_bytes = generar_reporte_pdf(resultados)
-                    st.download_button(
-                        label="📥 Descargar reporte en PDF",
-                        data=pdf_bytes,
-                        file_name="reporte_cas_restricciones.pdf",
-                        mime="application/pdf"
-                    )
+                            st.warning(f"⚠️ {cas_n} no encontrado en anexos")
+                    pdf = generar_reporte_pdf(resultados)
+                    st.download_button("📥 Descargar reporte en PDF", data=pdf,
+                                       file_name="reporte_cas_restricciones.pdf",
+                                       mime="application/pdf")
+                else:
+                    st.warning("Selecciona al menos un CAS.")
 
         else:
             st.info("No se encontraron coincidencias en la base CAS.")
 
-    # 4) Siempre mostramos la fórmula completa al final
-    st.subheader("Copiar fórmula completa")
-    st.text_area("Fórmula completa", formula_input, height=150)
 # ------------------------------------------------------------------------
-# 3. Búsqueda en listados de restricciones por CAS (como opción principal)
+# 2) Búsqueda en restricciones por CAS
 # ------------------------------------------------------------------------
 elif modo_busqueda == "Búsqueda en restricciones por CAS":
     st.header("Búsqueda en listados de restricciones por CAS")
-    
-    mostrar_informacion = st.checkbox("Mostrar información detallada", value=False)
-    
-    st.write("Ingrese los números de CAS (uno por línea) para revisar si están en los anexos de restricciones:")
-    cas_input_for_restrictions = st.text_area("Números de CAS:")
-
-    if st.button("Buscar CAS en restricciones", type="primary"):
-        if cas_input_for_restrictions.strip():
-            # Limpiar entrada y dividir por líneas o comas
-            cas_list = re.split(r'[\n,;]+', cas_input_for_restrictions)
-            cas_list = [c.strip() for c in cas_list if c.strip()]
-            
-            if cas_list:
-                # Mostrar los números CAS detectados
-                st.write(f"Se detectaron {len(cas_list)} números CAS para revisar:")
-                st.write(", ".join(cas_list))
-                
-                # Mostrar información de carga si se solicita
-                if mostrar_informacion:
-                    st.subheader("Información de carga de archivos:")
-                    for linea in info_carga:
-                        st.write(linea)
-                
-                # Buscar CAS en restricciones
-                resultados = buscar_cas_en_restricciones(cas_list, mostrar_info=mostrar_informacion)
-                
-                if not mostrar_informacion:
-                    # Mostrar resultados de forma organizada
-                    st.subheader("Resultados de la búsqueda:")
-                    
-                    # Primero mostrar los que sí se encontraron
-                    encontrados = [cas for cas, res in resultados.items() if res["encontrado"]]
-                    no_encontrados = [cas for cas, res in resultados.items() if not res["encontrado"]]
-                    
-                    if encontrados:
-                        st.success(f"✅ Se encontraron {len(encontrados)} números CAS en los anexos de restricciones")
-                        for cas_number in encontrados:
-                            st.markdown(f"### CAS: {cas_number}")
-                            for anexo in resultados[cas_number]["anexos"]:
-                                st.write(f"**Encontrado en {anexo['nombre']}:**")
-                                st.dataframe(anexo["data"])
-                                st.markdown("---")
-                    
-                    if no_encontrados:
-                        st.warning(f"⚠️ No se encontraron {len(no_encontrados)} números CAS en ningún anexo")
-                        st.write("CAS no encontrados: " + ", ".join(no_encontrados))
-                        
-                        # Sugerencias para la búsqueda
-                        st.info("Sugerencias para mejorar la búsqueda:")
-                        st.markdown("""
-                        - Verifica que el número CAS esté escrito correctamente con los guiones (ej: 51-84-3)
-                        - Intenta con y sin guiones para mayor compatibilidad
-                        - Activa la opción "Mostrar información detallada" para ver más detalles de la búsqueda
-                        - Prueba la búsqueda en PubChem para obtener información adicional
-                        """)
-            else:
-                st.warning("No se detectaron números CAS válidos.")
-        else:
-            st.warning("Ingrese al menos un número CAS.")
-
-# ------------------------------------------------------------------------
-# 4. Búsqueda en PubChem (por CAS o nombre de ingrediente)
-# ------------------------------------------------------------------------
-elif modo_busqueda == "Búsqueda en PubChem":
-    st.header("Búsqueda en PubChem")
-    st.write("""
-    Esta función permite buscar información detallada sobre sustancias químicas en la base de datos PubChem.
-    Puede buscar por número CAS o nombre de ingrediente (ejemplo: PETROLATUM).
-    """)
-    
-    # Selección de modo de búsqueda
-    search_mode = st.radio(
-        "Seleccione el tipo de búsqueda:",
-        ["Buscar por número CAS", "Buscar por nombre de ingrediente"]
-    )
-    
-    if search_mode == "Buscar por número CAS":
-        search_input = st.text_area("Ingrese uno o varios números CAS (uno por línea):")
-        search_button_text = "Buscar CAS en PubChem"
-        is_cas_search = True
-    else:  # Buscar por nombre de ingrediente
-        search_input = st.text_area("Ingrese uno o varios nombres de ingredientes (uno por línea):")
-        search_button_text = "Buscar ingredientes en PubChem"
-        is_cas_search = False
-    
-    if st.button(search_button_text, type="primary"):
-        if search_input.strip():
-            # Procesar la entrada para obtener la lista
-            input_list = re.split(r'[\n,;]+', search_input)
-            input_list = [item.strip() for item in input_list if item.strip()]
-            
-            if input_list:
-                if is_cas_search:
-                    st.write(f"Buscando {len(input_list)} números CAS en PubChem:")
-                else:
-                    st.write(f"Buscando {len(input_list)} ingredientes en PubChem:")
-                st.write(", ".join(input_list))
-                
-                # Buscar en PubChem
-                resultados_pubchem = buscar_lista_en_pubchem(input_list, por_cas=is_cas_search)
-                
-                # Mostrar resultados
-                st.subheader("Resultados de PubChem:")
-                
-                # Ordenar los resultados: primero los encontrados, luego los no encontrados
-                encontrados = [item for item, res in resultados_pubchem.items() if res['encontrado']]
-                no_encontrados = [item for item, res in resultados_pubchem.items() if not res['encontrado']]
-                
-                # Mostrar los encontrados
-                if encontrados:
-                    st.success(f"✅ Se encontraron {len(encontrados)} elementos en PubChem")
-                    for item in encontrados:
-                        if is_cas_search:
-                            st.markdown(f"### CAS: {item}")
-                        else:
-                            st.markdown(f"### Ingrediente: {item}")
-                        mostrar_info_pubchem(resultados_pubchem[item])
+    mostrar_info = st.checkbox("Mostrar información de carga", False)
+    cas_input = st.text_area("Ingrese números CAS (uno por línea):")
+    if st.button("Buscar CAS en restricciones"):
+        cas_list = [x.strip() for x in re.split(r'[\n,;]+', cas_input) if x.strip()]
+        if cas_list:
+            if mostrar_info:
+                st.write("".join(f"- {l}\n" for l in info_carga))
+            resultados = buscar_cas_en_restricciones(cas_list, mostrar_info=False)
+            st.subheader("Resultados")
+            for cas_n, res in resultados.items():
+                if res["encontrado"]:
+                    st.markdown(f"### CAS {cas_n}")
+                    for anexo in res["anexos"]:
+                        st.write(f"**{anexo['nombre']}**")
+                        st.dataframe(anexo["data"])
                         st.markdown("---")
-                
-                # Mostrar los no encontrados
-                if no_encontrados:
-                    st.warning(f"❌ No se encontraron {len(no_encontrados)} elementos en PubChem")
-                    st.write("Elementos no encontrados: " + ", ".join(no_encontrados))
-                
-                # Extraer números CAS de los resultados (para búsqueda por ingrediente)
-                if not is_cas_search:
-                    cas_encontrados = []
-                    for item, resultado in resultados_pubchem.items():
-                        if resultado['encontrado'] and 'cas_number' in resultado and resultado['cas_number']:
-                            cas_encontrados.append(resultado['cas_number'])
-                    
-                    if cas_encontrados:
-                        st.subheader("Números CAS encontrados")
-                        cas_text = "\n".join(cas_encontrados)
-                        st.text_area("Copie estos números CAS para buscar en restricciones:", cas_text, height=150)
-                
-                # Opción para también buscar en restricciones
-                st.subheader("¿Deseas verificar estos elementos en los listados de restricciones?")
-                if st.button("Buscar también en restricciones"):
-                    if is_cas_search:
-                        cas_to_check = [item for item in input_list if item in encontrados]
-                    else:
-                        cas_to_check = cas_encontrados
-                    
-                    if cas_to_check:
-                        resultados = buscar_cas_en_restricciones(cas_to_check)
-                        
-                        # Mostrar resultados de forma organizada
-                        st.subheader("Resultados en listados de restricciones:")
-                        
-                        # Primero mostrar los que sí se encontraron
-                        encontrados_rest = [cas for cas, res in resultados.items() if res["encontrado"]]
-                        no_encontrados_rest = [cas for cas, res in resultados.items() if not res["encontrado"]]
-                        
-                        if encontrados_rest:
-                            st.success(f"✅ Se encontraron {len(encontrados_rest)} números CAS en los anexos de restricciones")
-                            for cas_number in encontrados_rest:
-                                st.markdown(f"### CAS: {cas_number}")
-                                for anexo in resultados[cas_number]["anexos"]:
-                                    st.write(f"**Encontrado en {anexo['nombre']}:**")
-                                    st.dataframe(anexo["data"])
-                                    st.markdown("---")
-                        
-                        if no_encontrados_rest:
-                            st.warning(f"⚠️ No se encontraron {len(no_encontrados_rest)} números CAS en los anexos de restricciones")
-                            st.write("CAS no encontrados: " + ", ".join(no_encontrados_rest))
-                    else:
-                        st.warning("No hay números CAS para buscar en restricciones")
-            else:
-                st.warning("No se detectaron valores válidos para buscar.")
-        else:
-            st.warning("Ingrese al menos un valor para buscar.")
+                else:
+                    st.warning(f"⚠️ {cas_n} no encontrado")
+
+# ------------------------------------------------------------------------
+# 3) Búsqueda en PubChem
+# ------------------------------------------------------------------------
+else:
+    st.header("Búsqueda en PubChem")
+    modo = st.radio("Buscar por:", ["Número CAS", "Nombre de ingrediente"])
+    prompt = st.text_area("Ingrese valores (uno por línea):")
+    if st.button("Buscar en PubChem"):
+        items = [x.strip() for x in re.split(r'[\n,;]+', prompt) if x.strip()]
+        if items:
+            resultados = buscar_lista_en_pubchem(items, por_cas=(modo=="Número CAS"))
+            for item, data in resultados.items():
+                st.markdown(f"### {item}")
+                mostrar_info_pubchem(data)
+                st.markdown("---")
