@@ -7,32 +7,33 @@ import time
 import json
 from io import BytesIO
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, TableStyle, Spacer
-from reportlab.lib.pagesizes import letter
+from reportlab.lib.pagesizes import letter, landscape
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib import colors
+from reportlab.lib.units import inch
 
 # -----------------------------------------------------------
 # FUNCIÓN PARA GENERAR REPORTE PDF
 # -----------------------------------------------------------
 def generar_reporte_pdf(resultados):
-    from reportlab.lib.pagesizes import letter
-    from reportlab.lib.units import inch
-
     buffer = BytesIO()
-    # Letter por defecto es portrait (vertical)
+    # Letter en orientación landscape
     doc = SimpleDocTemplate(
         buffer,
-        pagesize=letter,
+        pagesize=landscape(letter),
         leftMargin=0.5*inch, rightMargin=0.5*inch,
         topMargin=0.75*inch, bottomMargin=0.75*inch
     )
     styles = getSampleStyleSheet()
     elementos = []
-    elementos.append(Paragraph("Reporte de Búsqueda de CAS en Anexos de Restricciones", styles['Title']))
+    elementos.append(Paragraph(
+        "Reporte de Búsqueda de CAS en Anexos de Restricciones",
+        styles['Title']
+    ))
     elementos.append(Spacer(1, 12))
 
-    # Ancho utilizable
-    page_width, _ = letter
+    # Ancho utilizable en landscape
+    page_width, _ = landscape(letter)
     usable_width = page_width - doc.leftMargin - doc.rightMargin
 
     for cas_num, res in resultados.items():
@@ -45,12 +46,12 @@ def generar_reporte_pdf(resultados):
                 df = anexo['data'].reset_index(drop=True)
                 data = [df.columns.tolist()] + df.values.tolist()
 
-                # establecer anchos equitativos de columna
+                # Calcular anchos de columna equitativos
                 ncols = len(data[0])
                 col_width = usable_width / ncols
                 col_widths = [col_width] * ncols
 
-                # envolver cada celda en un Paragraph para wrap
+                # Envolver cada celda en un Paragraph para permitir wrap
                 wrapped = []
                 for row in data:
                     wr = []
@@ -59,13 +60,17 @@ def generar_reporte_pdf(resultados):
                         wr.append(Paragraph(txt, styles['BodyText']))
                     wrapped.append(wr)
 
-                tbl = Table(wrapped, colWidths=col_widths, repeatRows=1)
+                tbl = Table(
+                    wrapped,
+                    colWidths=col_widths,
+                    repeatRows=1
+                )
                 tbl.setStyle(TableStyle([
                     ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#d3d3d3")),
-                    ('GRID', (0,0), (-1,-1), 0.25, colors.black),
-                    ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-                    ('FONTSIZE', (0,0), (-1,-1), 10),         # <- tamaño 10
-                    ('VALIGN', (0,0), (-1,-1), 'TOP'),
+                    ('GRID',       (0,0), (-1,-1), 0.25, colors.black),
+                    ('FONTNAME',   (0,0), (-1,0), 'Helvetica-Bold'),
+                    ('FONTSIZE',   (0,0), (-1,-1), 9),      # Tamaño de letra 9
+                    ('VALIGN',     (0,0), (-1,-1), 'TOP'),
                 ]))
                 elementos.append(tbl)
                 elementos.append(Spacer(1, 12))
