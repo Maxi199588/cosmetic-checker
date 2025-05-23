@@ -561,9 +561,9 @@ modo_busqueda = st.sidebar.selectbox(
     ]
 )
 
-# ------------------------------------------------------------------------
-# 1) Búsqueda por fórmula de ingredientes
-# ------------------------------------------------------------------------
+# -----------------------------------------------------------
+# 1) Búsqueda por fórmula de ingredientes (con cas_column dinámico)
+# -----------------------------------------------------------
 if modo_busqueda == "Búsqueda por fórmula de ingredientes":
     st.header("Búsqueda por fórmula de ingredientes")
     formula_input = st.text_area("Ingredientes (separados por comas o líneas):")
@@ -571,26 +571,44 @@ if modo_busqueda == "Búsqueda por fórmula de ingredientes":
 
     if st.button("Buscar Fórmula"):
         ingredientes = [i.strip() for i in re.split(r'[\n,]+', formula_input) if i.strip()]
-        df_res = buscar_ingredientes_por_nombre(ingredientes, exact=(tipo_busqueda=="Exacta"))
+        df_res = buscar_ingredientes_por_nombre(ingredientes, exact=(tipo_busqueda == "Exacta"))
         st.session_state["df_formula"] = df_res
 
     if "df_formula" in st.session_state:
         df = st.session_state["df_formula"]
-        cas_col = next((c for c in ["CAS", "CAS No", "CAS_number"] if c in df.columns), None)
 
-        if not df.empty and cas_col:
-            df["Seleccionar"] = False
-            cols = ["Seleccionar"] + [c for c in df.columns if c!="Seleccionar"]
-            df = df[cols]
-            df_edit = st.data_editor(df, column_config={
-                "Seleccionar": st.column_config.CheckboxColumn(label="Seleccionar")
-            }, key="editor_formula")
+        # 1) Detectar columna de CAS de forma dinámica
+        cas_column = next((c for c in df.columns if 'cas' in c.lower()), None)
 
+        if not df.empty and cas_column:
+            # 2) Preparar tabla editable
+            df_edit = df.copy()
+            df_edit["Seleccionar"] = False
+            cols = ["Seleccionar"] + [c for c in df_edit.columns if c != "Seleccionar"]
+            df_edit = df_edit[cols]
+
+            df_editado = st.data_editor(
+                df_edit,
+                column_config={
+                    "Seleccionar": st.column_config.CheckboxColumn(label="Seleccionar")
+                },
+                use_container_width=True,
+                key="editor_formula"
+            )
+
+            # 3) Botón que ahora usa la misma función de búsqueda manual
             if st.button("Buscar seleccionados en restricciones"):
-                marcados = df_edit[df_edit["Seleccionar"]]
-                cas_sel = marcados[cas_col].dropna().astype(str).tolist()
-                if cas_sel:
+                seleccionadas = df_editado[df_editado["Seleccionar"] == True]
+                # Limpiar y extraer sólo strings no nulos
+                cas_sel = [str(x).strip() for x in seleccionadas[cas_column] if pd.notna(x)]
+
+                if not cas_sel:
+                    st.warning("Selecciona al menos un CAS válido para buscar.")
+                else:
+                    # Ejecuta la misma búsqueda que en la rama manual
                     resultados = buscar_cas_en_restricciones(cas_sel, mostrar_info=False)
+
+                    # Mostrar resultados idénticos a la búsqueda manual
                     st.subheader("Resultados en listados de restricciones")
                     for cas_n, res in resultados.items():
                         if res["encontrado"]:
@@ -600,16 +618,18 @@ if modo_busqueda == "Búsqueda por fórmula de ingredientes":
                                 st.dataframe(anexo["data"])
                                 st.markdown("---")
                         else:
-                            st.warning(f"⚠️ {cas_n} no encontrado en anexos")
-                    pdf = generar_reporte_pdf(resultados)
-                    st.download_button("📥 Descargar reporte en PDF", data=pdf,
-                                       file_name="reporte_cas_restricciones.pdf",
-                                       mime="application/pdf")
-                else:
-                    st.warning("Selecciona al menos un CAS.")
+                            st.warning(f"⚠️ {cas_n} no encontrado en ningún anexo")
 
+                    # Ofrecer descarga de PDF
+                    pdf = generar_reporte_pdf(resultados)
+                    st.download_button(
+                        "📥 Descargar reporte en PDF",
+                        data=pdf,
+                        file_name="reporte_cas_restricciones.pdf",
+                        mime="application/pdf"
+                    )
         else:
-            st.info("No se encontraron coincidencias en la base CAS.")
+            st.info("No se encontraron coincidencias en la base CAS o no hay columna CAS detectada.")
 
 # ------------------------------------------------------------------------
 # 2) Búsqueda en restricciones por CAS
