@@ -82,54 +82,68 @@ def generar_reporte_pdf(resultados):
 # -----------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def load_data():
-    is_cloud = os.environ.get('STREAMLIT_SHARING', '') == 'true'
-    base_path = "." if is_cloud else os.path.dirname(os.path.abspath(__file__))
+    is_cloud   = os.environ.get('STREAMLIT_SHARING', '') == 'true'
+    base_path  = "." if is_cloud else os.path.dirname(os.path.abspath(__file__))
     restr_path = os.path.join(base_path, "RESTRICCIONES")
-    cas_path   = os.path.join(base_path, "CAS", "COSING_Ingredients-Fragrance Inventory_v2.xlsx")
 
     info_carga = []
 
-    # Carga de Annexes II a VI
     def load_annex(name, filename, skip):
-        df = pd.DataFrame()
+        # 1) Leer toda la tabla con saltos para datos
         path = os.path.join(restr_path, filename)
-        try:
-            df = pd.read_excel(path, skiprows=skip, header=0, engine="openpyxl")
-            df.columns = df.columns.str.strip()
-            info_carga.append(f"✅ {name}: {len(df)} filas")
-        except Exception as e:
-            info_carga.append(f"❌ Error {name}: {e}")
+        df = pd.read_excel(path, skiprows=skip, header=0, engine="openpyxl")
+        df.columns = df.columns.str.strip()
+
+        # 2) Leer SOLO la fila de fallback (la fila justo anterior al header)
+        raw = pd.read_excel(path, header=None, nrows=skip, engine="openpyxl")
+        fallback = raw.iloc[skip-1].tolist()
+
+        # 3) Reemplazar columnas Unnamed por el valor de fallback
+        new_cols = []
+        for idx, col in enumerate(df.columns):
+            if str(col).lower().startswith("unnamed"):
+                # fallback[idx] puede ser nan, así que chequeamos
+                val = fallback[idx]
+                new = str(val).strip() if pd.notna(val) else col
+                new_cols.append(new)
+            else:
+                new_cols.append(col)
+        df.columns = new_cols
+
+        info_carga.append(f"✅ {name}: {len(df)} filas")
         return df
 
-    annex_ii  = load_annex("Annex II",  "COSING_Annex_II_v2.xlsx", 7)
+    annex_ii  = load_annex("Annex II",  "COSING_Annex_II_v2.xlsx",  7)
     annex_iii = load_annex("Annex III", "COSING_Annex_III_v2.xlsx",7)
     annex_iv  = load_annex("Annex IV",  "COSING_Annex_IV_v2.xlsx", 7)
-    annex_v   = load_annex("Annex V",   "COSING_Annex_V_v2.xlsx",  7)
+    annex_v   = load_annex("Annex V",   "COSING_Annex_V2.xlsx",   7)
     annex_vi  = load_annex("Annex VI",  "COSING_Annex_VI_v2.xlsx", 7)
 
-    # Carga de MERCOSUR Prohibidas (fila 6 → skiprows=5)
+    # MERCOSUR Prohibidas
     mercosur = pd.DataFrame()
     try:
         path = os.path.join(restr_path, "07 MERCOSUR_062_2014_PROHIBIDAS.xlsx")
+        # skiprows=5: header fila6, fallback fila5
         mercosur = pd.read_excel(path, skiprows=5, header=0, engine="openpyxl")
         mercosur.columns = mercosur.columns.str.strip()
+        raw = pd.read_excel(path, header=None, nrows=5, engine="openpyxl")
+        fallback = raw.iloc[4].tolist()
+        new_cols = []
+        for idx, col in enumerate(mercosur.columns):
+            if str(col).lower().startswith("unnamed"):
+                val = fallback[idx]
+                new_cols.append(str(val).strip() if pd.notna(val) else col)
+            else:
+                new_cols.append(col)
+        mercosur.columns = new_cols
+
         info_carga.append(f"✅ MERCOSUR Prohibidas: {len(mercosur)} filas")
     except Exception as e:
         info_carga.append(f"❌ Error MERCOSUR Prohibidas: {e}")
 
-    # Carga de la base CAS
-    cas_db = pd.DataFrame()
-    try:
-        cas_db = pd.read_excel(cas_path, skiprows=7, header=0, engine="openpyxl")
-        cas_db.columns = cas_db.columns.str.strip()
-        if "INCI name" in cas_db.columns:
-            cas_db.rename(columns={"INCI name": "Ingredient"}, inplace=True)
-        info_carga.append(f"✅ Base CAS: {len(cas_db)} filas")
-    except Exception as e:
-        info_carga.append(f"❌ Error Base CAS: {e}")
+    # … aquí tu carga de cas_db …
 
     return annex_ii, annex_iii, annex_iv, annex_v, annex_vi, mercosur, cas_db, info_carga
-
 # -----------------------------------------------------------
 # FUNCIÓN PARA BÚSQUEDA EN PUBCHEM POR CAS
 # -----------------------------------------------------------
