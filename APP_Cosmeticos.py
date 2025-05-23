@@ -116,7 +116,7 @@ def load_data():
     annex_ii  = load_annex("Annex II",  "COSING_Annex_II_v2.xlsx",  7)
     annex_iii = load_annex("Annex III", "COSING_Annex_III_v2.xlsx",7)
     annex_iv  = load_annex("Annex IV",  "COSING_Annex_IV_v2.xlsx", 7)
-    annex_v   = load_annex("Annex V",   "COSING_Annex_V2.xlsx",   7)
+    annex_v   = load_annex("Annex V",   "COSING_Annex_V_v2.xlsx",   7)
     annex_vi  = load_annex("Annex VI",  "COSING_Annex_VI_v2.xlsx", 7)
 
     # MERCOSUR Prohibidas
