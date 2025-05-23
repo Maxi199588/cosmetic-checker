@@ -28,57 +28,57 @@ def generar_reporte_pdf(resultados):
     styles = getSampleStyleSheet()
     elementos = []
 
-    # Título
+    # Título general
     elementos.append(Paragraph(
         "Reporte de Búsqueda de CAS en Anexos de Restricciones",
         styles['Title']
     ))
     elementos.append(Spacer(1, 12))
 
-    # Ancho disponible para tablas
+    # Ancho disponible
     page_width, _ = landscape(letter)
     usable_width = page_width - doc.leftMargin - doc.rightMargin
 
-    # Para cada CAS y sus resultados
+    primera = True
     for cas_num, res in resultados.items():
-        # Añadimos salto de página si no es el primer CAS
-        if elementos[-1] is not None:
+        # Salto de página entre CAS (pero no antes del primero)
+        if not primera:
             elementos.append(PageBreak())
+        primera = False
 
+        # Encabezado CAS
         elementos.append(Paragraph(f"<b>CAS {cas_num}</b>", styles['Heading2']))
         elementos.append(Spacer(1, 6))
 
+        # Si no hay datos
         if not res["encontrado"]:
             elementos.append(Paragraph("No encontrado en ningún anexo.", styles['Normal']))
             elementos.append(Spacer(1, 12))
             continue
 
-        # Para cada anexo donde apareció
+        # Para cada anexo
         for anexo in res["anexos"]:
             elementos.append(Paragraph(anexo['nombre'], styles['Heading3']))
             df = anexo['data'].reset_index(drop=True)
-
             header = df.columns.tolist()
             rows = df.values.tolist()
 
-            # Dividir en bloques de 25 filas
-            max_rows = 25
+            # Dividir en bloques de 15 filas
+            max_rows = 15
             for start in range(0, len(rows), max_rows):
                 chunk = rows[start:start+max_rows]
                 data = [header] + chunk
 
-                # Calcular anchos equitativos
-                ncols = len(header)
-                col_width = usable_width / ncols
-                col_widths = [col_width] * ncols
+                # Anchos equitativos
+                col_count = len(header)
+                col_width = usable_width / col_count
+                col_widths = [col_width]*col_count
 
-                # Envolver cada celda en Paragraph para wrap
+                # Envolver en Paragraph
                 wrapped = []
                 for row in data:
-                    wr = []
-                    for cell in row:
-                        txt = str(cell) if cell is not None else ""
-                        wr.append(Paragraph(txt, styles['BodyText']))
+                    wr = [Paragraph(str(cell) if cell is not None else "", styles['BodyText'])
+                          for cell in row]
                     wrapped.append(wr)
 
                 tbl = Table(wrapped, colWidths=col_widths, repeatRows=1)
@@ -92,7 +92,6 @@ def generar_reporte_pdf(resultados):
                 elementos.append(tbl)
                 elementos.append(Spacer(1, 12))
 
-    # Construir PDF
     doc.build(elementos)
     pdf = buffer.getvalue()
     buffer.close()
