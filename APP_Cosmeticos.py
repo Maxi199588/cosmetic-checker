@@ -15,12 +15,20 @@ from reportlab.lib import colors
 # FUNCIÓN PARA GENERAR REPORTE PDF
 # -----------------------------------------------------------
 def generar_reporte_pdf(resultados):
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib.units import inch
+
     buffer = BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=letter)
+    doc = SimpleDocTemplate(buffer, pagesize=letter,
+                            leftMargin=0.5*inch, rightMargin=0.5*inch,
+                            topMargin=0.75*inch, bottomMargin=0.75*inch)
     styles = getSampleStyleSheet()
     elementos = []
     elementos.append(Paragraph("Reporte de Búsqueda de CAS en Anexos de Restricciones", styles['Title']))
     elementos.append(Spacer(1, 12))
+
+    page_width, page_height = letter
+    usable_width = page_width - doc.leftMargin - doc.rightMargin
 
     for cas_num, res in resultados.items():
         elementos.append(Paragraph(f"<b>CAS {cas_num}</b>", styles['Heading2']))
@@ -29,11 +37,28 @@ def generar_reporte_pdf(resultados):
                 elementos.append(Paragraph(anexo['nombre'], styles['Heading3']))
                 df = anexo['data'].reset_index(drop=True)
                 data = [df.columns.tolist()] + df.values.tolist()
-                tbl = Table(data, repeatRows=1)
+
+                # calcular ancho de columna uniforme
+                ncols = len(data[0])
+                col_width = usable_width / ncols
+                col_widths = [col_width] * ncols
+
+                # convertir todo a Paragraph para permitir wrap
+                wrapped_data = []
+                for row in data:
+                    wrapped_row = []
+                    for cell in row:
+                        txt = str(cell) if cell is not None else ""
+                        wrapped = Paragraph(txt, styles['BodyText'])
+                        wrapped_row.append(wrapped)
+                    wrapped_data.append(wrapped_row)
+
+                tbl = Table(wrapped_data, colWidths=col_widths, repeatRows=1)
                 tbl.setStyle(TableStyle([
                     ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#d3d3d3")),
                     ('GRID', (0,0), (-1,-1), 0.25, colors.black),
                     ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0,0), (-1,-1), 8),
                     ('VALIGN', (0,0), (-1,-1), 'TOP'),
                 ]))
                 elementos.append(tbl)
