@@ -19,50 +19,57 @@ def generar_reporte_pdf(resultados):
     from reportlab.lib.units import inch
 
     buffer = BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=letter,
-                            leftMargin=0.5*inch, rightMargin=0.5*inch,
-                            topMargin=0.75*inch, bottomMargin=0.75*inch)
+    # Letter por defecto es portrait (vertical)
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=letter,
+        leftMargin=0.5*inch, rightMargin=0.5*inch,
+        topMargin=0.75*inch, bottomMargin=0.75*inch
+    )
     styles = getSampleStyleSheet()
     elementos = []
     elementos.append(Paragraph("Reporte de Búsqueda de CAS en Anexos de Restricciones", styles['Title']))
     elementos.append(Spacer(1, 12))
 
-    page_width, page_height = letter
+    # Ancho utilizable
+    page_width, _ = letter
     usable_width = page_width - doc.leftMargin - doc.rightMargin
 
     for cas_num, res in resultados.items():
         elementos.append(Paragraph(f"<b>CAS {cas_num}</b>", styles['Heading2']))
+        elementos.append(Spacer(1, 6))
+
         if res["encontrado"]:
             for anexo in res["anexos"]:
                 elementos.append(Paragraph(anexo['nombre'], styles['Heading3']))
                 df = anexo['data'].reset_index(drop=True)
                 data = [df.columns.tolist()] + df.values.tolist()
 
-                # calcular ancho de columna uniforme
+                # establecer anchos equitativos de columna
                 ncols = len(data[0])
                 col_width = usable_width / ncols
                 col_widths = [col_width] * ncols
 
-                # convertir todo a Paragraph para permitir wrap
-                wrapped_data = []
+                # envolver cada celda en un Paragraph para wrap
+                wrapped = []
                 for row in data:
-                    wrapped_row = []
+                    wr = []
                     for cell in row:
                         txt = str(cell) if cell is not None else ""
-                        wrapped = Paragraph(txt, styles['BodyText'])
-                        wrapped_row.append(wrapped)
-                    wrapped_data.append(wrapped_row)
+                        wr.append(Paragraph(txt, styles['BodyText']))
+                    wrapped.append(wr)
 
-                tbl = Table(wrapped_data, colWidths=col_widths, repeatRows=1)
+                tbl = Table(wrapped, colWidths=col_widths, repeatRows=1)
                 tbl.setStyle(TableStyle([
                     ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#d3d3d3")),
                     ('GRID', (0,0), (-1,-1), 0.25, colors.black),
                     ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-                    ('FONTSIZE', (0,0), (-1,-1), 8),
+                    ('FONTSIZE', (0,0), (-1,-1), 10),         # <- tamaño 10
                     ('VALIGN', (0,0), (-1,-1), 'TOP'),
                 ]))
                 elementos.append(tbl)
                 elementos.append(Spacer(1, 12))
+
         else:
             elementos.append(Paragraph("No encontrado en ningún anexo.", styles['Normal']))
             elementos.append(Spacer(1, 12))
