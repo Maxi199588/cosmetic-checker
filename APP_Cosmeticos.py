@@ -35,51 +35,46 @@ def generar_reporte_pdf(resultados):
     ))
     elementos.append(Spacer(1, 12))
 
-    # Ancho disponible
     page_width, _ = landscape(letter)
     usable_width = page_width - doc.leftMargin - doc.rightMargin
 
     primera = True
     for cas_num, res in resultados.items():
-        # Salto de página entre CAS (pero no antes del primero)
+        # Salto de página entre cada CAS
         if not primera:
             elementos.append(PageBreak())
         primera = False
 
-        # Encabezado CAS
         elementos.append(Paragraph(f"<b>CAS {cas_num}</b>", styles['Heading2']))
         elementos.append(Spacer(1, 6))
 
-        # Si no hay datos
         if not res["encontrado"]:
             elementos.append(Paragraph("No encontrado en ningún anexo.", styles['Normal']))
             elementos.append(Spacer(1, 12))
             continue
 
-        # Para cada anexo
         for anexo in res["anexos"]:
             elementos.append(Paragraph(anexo['nombre'], styles['Heading3']))
             df = anexo['data'].reset_index(drop=True)
             header = df.columns.tolist()
             rows = df.values.tolist()
 
-            # Dividir en bloques de 15 filas
-            max_rows = 15
-            for start in range(0, len(rows), max_rows):
-                chunk = rows[start:start+max_rows]
-                data = [header] + chunk
+            # **1 fila por tabla** para asegurar que nada exceda la página
+            for row in rows:
+                data = [header, row]
 
-                # Anchos equitativos
+                # calcular anchos
                 col_count = len(header)
                 col_width = usable_width / col_count
                 col_widths = [col_width]*col_count
 
-                # Envolver en Paragraph
-                wrapped = []
-                for row in data:
-                    wr = [Paragraph(str(cell) if cell is not None else "", styles['BodyText'])
-                          for cell in row]
-                    wrapped.append(wr)
+                # envolver en Paragraph
+                wrapped = [
+                    [Paragraph(str(cell) if cell is not None else "", styles['BodyText'])
+                     for cell in data[0]],
+                    [Paragraph(str(cell) if cell is not None else "", styles['BodyText'])
+                     for cell in data[1]]
+                ]
 
                 tbl = Table(wrapped, colWidths=col_widths, repeatRows=1)
                 tbl.setStyle(TableStyle([
@@ -90,7 +85,9 @@ def generar_reporte_pdf(resultados):
                     ('VALIGN',     (0,0), (-1,-1), 'TOP'),
                 ]))
                 elementos.append(tbl)
-                elementos.append(Spacer(1, 12))
+                elementos.append(Spacer(1, 6))
+                # siempre un PageBreak tras cada mini-tabla
+                elementos.append(PageBreak())
 
     doc.build(elementos)
     pdf = buffer.getvalue()
