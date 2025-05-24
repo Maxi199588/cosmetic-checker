@@ -395,56 +395,9 @@ def buscar_cas_en_restricciones(cas_list, mostrar_info=False):
         if mostrar_info:
             st.markdown(f"### Buscando CAS: {cas_number}")
         
-        # Caso especial para 51-84-3
-        if cas_number == "51-84-3":
-            if mostrar_info:
-                st.write("Buscando específicamente en Annex II, columna 'CAS Number'...")
-            
-            if 'CAS Number' in annex_ii.columns:
-                # Búsqueda por contenido en lugar de coincidencia exacta
-                matches = annex_ii[annex_ii['CAS Number'].astype(str).str.contains(cas_number, case=False, na=False)]
-                
-                if not matches.empty:
-                    if mostrar_info:
-                        st.success(f"✅ ENCONTRADO en Annex II por búsqueda de contenido")
-                        st.dataframe(matches)
-                    
-                    resultados[cas_number]["encontrado"] = True
-                    resultados[cas_number]["anexos"].append({
-                        "nombre": "Annex II",
-                        "data": matches
-                    })
-                    continue  # Ir al siguiente CAS
-                
-                # Iteración fila por fila
-                if mostrar_info:
-                    st.write("Intentando búsqueda manual fila por fila...")
-                
-                encontrado = False
-                for idx, row in annex_ii.iterrows():
-                    try:
-                        cas_valor = str(row['CAS Number']).strip()
-                        if cas_number in cas_valor or cas_valor == "51843" or '51-84-3' in cas_valor:
-                            if mostrar_info:
-                                st.success(f"✅ ENCONTRADO en Annex II, fila {idx}")
-                                st.dataframe(annex_ii.loc[[idx]])
-                            
-                            resultados[cas_number]["encontrado"] = True
-                            resultados[cas_number]["anexos"].append({
-                                "nombre": "Annex II",
-                                "data": annex_ii.loc[[idx]]
-                            })
-                            encontrado = True
-                            break
-                    except:
-                        pass
-                
-                if encontrado:
-                    continue  # Ir al siguiente CAS
-        
-        # Búsqueda general en todos los anexos
+        # Búsqueda EXACTA en todos los anexos
         if mostrar_info:
-            st.write(f"Buscando {cas_number} en todos los anexos...")
+            st.write(f"Buscando {cas_number} con coincidencia EXACTA...")
         
         encontrado_en_alguno = False
         
@@ -462,11 +415,12 @@ def buscar_cas_en_restricciones(cas_list, mostrar_info=False):
                 if mostrar_info:
                     st.write(f"Buscando en {nombre_annex}, columna '{cas_column}'...")
                 
-                # Cambio clave: Búsqueda por contenido en lugar de coincidencia exacta
-                matches = df_annex[df_annex[cas_column].astype(str).str.contains(cas_number, case=False, na=False)]
+                # BÚSQUEDA EXACTA: Convertir a string, limpiar espacios y comparar exactamente
+                matches = df_annex[df_annex[cas_column].astype(str).str.strip() == cas_number.strip()]
+                
                 if not matches.empty:
                     if mostrar_info:
-                        st.success(f"✅ ENCONTRADO en {nombre_annex}, columna '{cas_column}'")
+                        st.success(f"✅ ENCONTRADO en {nombre_annex}, columna '{cas_column}' (coincidencia exacta)")
                         st.dataframe(matches)
                     
                     resultados[cas_number]["encontrado"] = True
@@ -482,7 +436,7 @@ def buscar_cas_en_restricciones(cas_list, mostrar_info=False):
                 break
         
         if not encontrado_en_alguno and mostrar_info:
-            st.warning(f"❌ No se encontró el CAS {cas_number} en ningún anexo")
+            st.warning(f"❌ No se encontró el CAS {cas_number} en ningún anexo (búsqueda exacta)")
         
         if mostrar_info:
             st.markdown("---")  # Separador entre resultados de CAS
@@ -500,31 +454,6 @@ def buscar_ingredientes_por_nombre(ingredientes, exact=False):
         st.error("La base de datos CAS está vacía o no se cargó correctamente.")
         return pd.DataFrame()
     
-    # Mostrar información de debug sobre las columnas disponibles
-    with st.expander("🔍 Ver información de debug de la base CAS"):
-        st.write("**Columnas disponibles en la base CAS:**")
-        st.write(cas_db.columns.tolist())
-        st.write(f"**Total de filas en base CAS:** {len(cas_db)}")
-        
-        # Detectar automáticamente las posibles columnas de nombre
-        posibles_columnas_nombre = []
-        for col in cas_db.columns:
-            col_lower = col.lower()
-            if any(keyword in col_lower for keyword in ['name', 'ingredient', 'inci', 'substance']):
-                posibles_columnas_nombre.append(col)
-        
-        st.write(f"**Posibles columnas de nombre detectadas:** {posibles_columnas_nombre}")
-        
-        if posibles_columnas_nombre:
-            # Usar la primera columna detectada como columna principal
-            columna_nombre = posibles_columnas_nombre[0]
-            st.write(f"**Usando columna:** '{columna_nombre}' para la búsqueda")
-            
-            # Mostrar una muestra de los datos para verificar
-            st.write("**Muestra de datos en la columna seleccionada:**")
-            muestra = cas_db[columna_nombre].dropna().head(10).tolist()
-            st.write(muestra)
-    
     # Detectar automáticamente las posibles columnas de nombre
     posibles_columnas_nombre = []
     for col in cas_db.columns:
@@ -539,6 +468,13 @@ def buscar_ingredientes_por_nombre(ingredientes, exact=False):
     
     # Usar la primera columna detectada como columna principal
     columna_nombre = posibles_columnas_nombre[0]
+    
+    # Detectar columna de CAS
+    columna_cas = None
+    for col in cas_db.columns:
+        if 'cas' in col.lower() and 'no' in col.lower():
+            columna_cas = col
+            break
     
     # Buscar cada ingrediente según el modo (exacto o aproximado)
     for ing in ingredientes:
@@ -557,6 +493,8 @@ def buscar_ingredientes_por_nombre(ingredientes, exact=False):
                     columna_nombre: [ing],
                     "Resultado": ["No encontrado (exacto)"]
                 })
+                if columna_cas:
+                    df_not_found[columna_cas] = [None]
                 resultados_formula.append(df_not_found)
             else:
                 df_ing = df_ing.copy()
@@ -578,6 +516,8 @@ def buscar_ingredientes_por_nombre(ingredientes, exact=False):
                     columna_nombre: [ing],
                     "Resultado": ["No encontrado (aproximado)"]
                 })
+                if columna_cas:
+                    df_not_found[columna_cas] = [None]
                 resultados_formula.append(df_not_found)
     
     if resultados_formula:
@@ -585,6 +525,98 @@ def buscar_ingredientes_por_nombre(ingredientes, exact=False):
         return resultado_final
     else:
         return pd.DataFrame()
+
+# -----------------------------------------------------------
+# FUNCIÓN PARA BUSCAR MÚLTIPLES CAS EN PUBCHEM
+# -----------------------------------------------------------
+def buscar_cas_faltantes_en_pubchem(ingredientes_sin_cas):
+    """
+    Busca números CAS en PubChem para ingredientes que no los tienen en la base local
+    """
+    st.info(f"🔍 Buscando números CAS en PubChem para {len(ingredientes_sin_cas)} ingredientes...")
+    
+    resultados_pubchem = {}
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    for i, ingrediente in enumerate(ingredientes_sin_cas):
+        # Actualizar progreso
+        progress = (i + 1) / len(ingredientes_sin_cas)
+        progress_bar.progress(progress)
+        status_text.text(f"Buscando: {ingrediente} ({i+1}/{len(ingredientes_sin_cas)})")
+        
+        # Buscar en PubChem
+        resultado = buscar_ingrediente_en_pubchem(ingrediente)
+        resultados_pubchem[ingrediente] = resultado
+        
+        # Delay para no sobrecargar la API
+        if i < len(ingredientes_sin_cas) - 1:
+            time.sleep(1)
+    
+    progress_bar.empty()
+    status_text.empty()
+    
+    # Procesar resultados
+    cas_encontrados = {}
+    ingredientes_sin_exito = []
+    
+    for ingrediente, resultado in resultados_pubchem.items():
+        if resultado['encontrado'] and 'cas_number' in resultado and resultado['cas_number']:
+            cas_encontrados[ingrediente] = resultado['cas_number']
+        else:
+            ingredientes_sin_exito.append(ingrediente)
+    
+    # Mostrar resultados
+    if cas_encontrados:
+        st.success(f"✅ Se encontraron números CAS para {len(cas_encontrados)} ingredientes en PubChem:")
+        
+        # Crear DataFrame con los resultados
+        df_pubchem = pd.DataFrame([
+            {
+                "Ingrediente": ing,
+                "CAS Number": cas,
+                "Fuente": "PubChem"
+            }
+            for ing, cas in cas_encontrados.items()
+        ])
+        
+        st.dataframe(df_pubchem)
+        
+        # Guardar en session_state para usar después
+        st.session_state["cas_from_pubchem"] = df_pubchem
+    
+    if ingredientes_sin_exito:
+        st.warning(f"⚠️ No se encontraron números CAS para {len(ingredientes_sin_exito)} ingredientes:")
+        st.write(", ".join(ingredientes_sin_exito))
+    
+    return cas_encontrados
+
+# -----------------------------------------------------------
+# FUNCIÓN PARA VALIDAR Y FILTRAR CAS VÁLIDOS
+# -----------------------------------------------------------
+def validar_y_filtrar_cas(df_editado, cas_column):
+    """
+    Valida qué filas tienen números CAS válidos y cuáles no
+    """
+    seleccionadas = df_editado[df_editado["Seleccionar"] == True]
+    
+    if seleccionadas.empty:
+        return [], [], "No se ha seleccionado ninguna fila."
+    
+    cas_validos = []
+    ingredientes_sin_cas = []
+    
+    for _, row in seleccionadas.iterrows():
+        cas_value = row[cas_column] if cas_column in row else None
+        ingrediente = row.get("Búsqueda", "Ingrediente desconocido")
+        
+        # Verificar si el CAS es válido (no es NaN, None, o string vacío)
+        if pd.notna(cas_value) and str(cas_value).strip() and str(cas_value).strip().lower() != 'nan':
+            cas_validos.append(str(cas_value).strip())
+        else:
+            ingredientes_sin_cas.append(ingrediente)
+    
+    return cas_validos, ingredientes_sin_cas, None
 
 # -----------------------------------------------------------
 # FUNCIÓN PARA BUSCAR INGREDIENTES EN ANEXOS
