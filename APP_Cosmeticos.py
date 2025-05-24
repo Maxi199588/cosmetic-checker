@@ -141,21 +141,18 @@ def load_data():
     except Exception as e:
         info_carga.append(f"❌ Error MERCOSUR Prohibidas: {e}")
 
-    # Cargar base de datos CAS - COSING Ingredients-Fragrance Inventory
-    cas_db = pd.DataFrame()
+    # Leer el documento CAS en Excel
     try:
-        cas_path = os.path.join(base_path, "COSING_Ingredients-Fragrance Inventory_v2.xlsx")
-        
-        # Cargar el archivo de ingredientes CAS
-        cas_db = pd.read_excel(cas_path, engine="openpyxl")
+        cas_db = pd.read_excel(cas_db_path, skiprows=7, header=0, engine="openpyxl")
         cas_db.columns = cas_db.columns.str.strip()
         
-        info_carga.append(f"✅ COSING Ingredients-Fragrance Inventory: {len(cas_db)} filas")
-        
+        if "INCI name" in cas_db.columns:
+            cas_db.rename(columns={"INCI name": "Ingredient"}, inplace=True)
+            
+        info_carga.append(f"✅ Base de datos CAS cargada: {len(cas_db)} filas")
     except Exception as e:
-        # En caso de error, crear DataFrame vacío con columnas básicas
-        cas_db = pd.DataFrame(columns=['Ingredient', 'CAS Number'])
-        info_carga.append(f"❌ Error cargando COSING Ingredients-Fragrance Inventory: {e}")
+        info_carga.append(f"❌ Error cargando base de datos CAS: {e}")
+        cas_db = pd.DataFrame()
 
     return annex_ii, annex_iii, annex_iv, annex_v, annex_vi, mercosur, cas_db, info_carga
 # -----------------------------------------------------------
