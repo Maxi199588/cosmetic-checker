@@ -141,18 +141,43 @@ def load_data():
     except Exception as e:
         info_carga.append(f"❌ Error MERCOSUR Prohibidas: {e}")
 
-    # Leer el documento CAS en Excel
+    # Cargar base de datos CAS - COSING Ingredients-Fragrance Inventory (CORREGIDO)
+    cas_db = pd.DataFrame()
     try:
-        cas_db = pd.read_excel(cas_db_path, skiprows=7, header=0, engine="openpyxl")
-        cas_db.columns = cas_db.columns.str.strip()
+        # CORREGIDO: Usar la carpeta CAS
+        cas_path = os.path.join(base_path, "CAS", "COSING_Ingredients-Fragrance Inventory_v2.xlsx")
+        info_carga.append(f"Intentando cargar CAS desde: {cas_path}")
         
-        if "INCI name" in cas_db.columns:
-            cas_db.rename(columns={"INCI name": "Ingredient"}, inplace=True)
-            
-        info_carga.append(f"✅ Base de datos CAS cargada: {len(cas_db)} filas")
+        # Intentar diferentes configuraciones de skiprows para encontrar la correcta
+        for skip_rows in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]:
+            try:
+                cas_db_temp = pd.read_excel(cas_path, skiprows=skip_rows, header=0, engine="openpyxl")
+                cas_db_temp.columns = cas_db_temp.columns.str.strip()
+                
+                # Verificar si tiene datos útiles (más de 10 filas y al menos una columna con "name" o "inci")
+                if len(cas_db_temp) > 10:
+                    has_name_col = any('name' in col.lower() or 'inci' in col.lower() or 'ingredient' in col.lower() for col in cas_db_temp.columns)
+                    if has_name_col:
+                        cas_db = cas_db_temp
+                        info_carga.append(f"✅ COSING Ingredients-Fragrance Inventory cargado con skiprows={skip_rows}: {len(cas_db)} filas")
+                        info_carga.append(f"Columnas en CAS DB: {', '.join(cas_db.columns.tolist())}")
+                        
+                        # Renombrar columna si es necesario
+                        if "INCI name" in cas_db.columns:
+                            cas_db.rename(columns={"INCI name": "Ingredient"}, inplace=True)
+                            info_carga.append("✅ Columna 'INCI name' renombrada a 'Ingredient'")
+                        
+                        break
+            except Exception as inner_e:
+                continue
+        
+        if cas_db.empty:
+            info_carga.append(f"❌ No se pudo cargar la base de datos CAS con ninguna configuración")
+        
     except Exception as e:
-        info_carga.append(f"❌ Error cargando base de datos CAS: {e}")
-        cas_db = pd.DataFrame()
+        # En caso de error, crear DataFrame vacío con columnas básicas
+        cas_db = pd.DataFrame(columns=['Ingredient', 'CAS Number'])
+        info_carga.append(f"❌ Error cargando COSING Ingredients-Fragrance Inventory: {e}")
 
     return annex_ii, annex_iii, annex_iv, annex_v, annex_vi, mercosur, cas_db, info_carga
 # -----------------------------------------------------------
