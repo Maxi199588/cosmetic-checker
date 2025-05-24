@@ -141,17 +141,17 @@ def load_data():
     except Exception as e:
         info_carga.append(f"❌ Error MERCOSUR Prohibidas: {e}")
 
-    # Cargar base de datos CAS - COSING Ingredients-Fragrance Inventory (CORREGIDO)
+    # Cargar base de datos CAS - CORREGIDO
     cas_db = pd.DataFrame()
     try:
-        # CORREGIDO: Usar la carpeta CAS
-        cas_path = os.path.join(base_path, "CAS", "COSING_Ingredients-Fragrance Inventory_v2.xlsx")
-        info_carga.append(f"Intentando cargar CAS desde: {cas_path}")
+        # RUTA CORREGIDA: usar carpeta CAS
+        cas_db_path = os.path.join(base_path, "CAS", "COSING_Ingredients-Fragrance Inventory_v2.xlsx")
+        info_carga.append(f"Intentando cargar CAS desde: {cas_db_path}")
         
         # Intentar diferentes configuraciones de skiprows para encontrar la correcta
         for skip_rows in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]:
             try:
-                cas_db_temp = pd.read_excel(cas_path, skiprows=skip_rows, header=0, engine="openpyxl")
+                cas_db_temp = pd.read_excel(cas_db_path, skiprows=skip_rows, header=0, engine="openpyxl")
                 cas_db_temp.columns = cas_db_temp.columns.str.strip()
                 
                 # Verificar si tiene datos útiles (más de 10 filas y al menos una columna con "name" o "inci")
@@ -175,7 +175,6 @@ def load_data():
             info_carga.append(f"❌ No se pudo cargar la base de datos CAS con ninguna configuración")
         
     except Exception as e:
-        # En caso de error, crear DataFrame vacío con columnas básicas
         cas_db = pd.DataFrame(columns=['Ingredient', 'CAS Number'])
         info_carga.append(f"❌ Error cargando COSING Ingredients-Fragrance Inventory: {e}")
 
@@ -488,29 +487,67 @@ def buscar_cas_en_restricciones(cas_list, mostrar_info=False):
 def buscar_ingredientes_por_nombre(ingredientes, exact=False):
     resultados_formula = []
     
-    # Determinar la columna de nombre en la base de datos CAS
-    columna_nombre = None
-    if "Ingredient" in cas_db.columns:
-        columna_nombre = "Ingredient"
-    elif "Name" in cas_db.columns:
-        columna_nombre = "Name"
-    
-    if not columna_nombre:
-        st.error("La base de datos CAS no tiene una columna identificable para el nombre del ingrediente.")
+    # Verificar si la base de datos CAS está cargada y no está vacía
+    if cas_db.empty:
+        st.error("La base de datos CAS está vacía o no se cargó correctamente.")
         return pd.DataFrame()
+    
+    # Mostrar información de debug sobre las columnas disponibles
+    with st.expander("🔍 Ver información de debug de la base CAS"):
+        st.write("**Columnas disponibles en la base CAS:**")
+        st.write(cas_db.columns.tolist())
+        st.write(f"**Total de filas en base CAS:** {len(cas_db)}")
+        
+        # Detectar automáticamente las posibles columnas de nombre
+        posibles_columnas_nombre = []
+        for col in cas_db.columns:
+            col_lower = col.lower()
+            if any(keyword in col_lower for keyword in ['name', 'ingredient', 'inci', 'substance']):
+                posibles_columnas_nombre.append(col)
+        
+        st.write(f"**Posibles columnas de nombre detectadas:** {posibles_columnas_nombre}")
+        
+        if posibles_columnas_nombre:
+            # Usar la primera columna detectada como columna principal
+            columna_nombre = posibles_columnas_nombre[0]
+            st.write(f"**Usando columna:** '{columna_nombre}' para la búsqueda")
+            
+            # Mostrar una muestra de los datos para verificar
+            st.write("**Muestra de datos en la columna seleccionada:**")
+            muestra = cas_db[columna_nombre].dropna().head(10).tolist()
+            st.write(muestra)
+    
+    # Detectar automáticamente las posibles columnas de nombre
+    posibles_columnas_nombre = []
+    for col in cas_db.columns:
+        col_lower = col.lower()
+        if any(keyword in col_lower for keyword in ['name', 'ingredient', 'inci', 'substance']):
+            posibles_columnas_nombre.append(col)
+    
+    if not posibles_columnas_nombre:
+        st.error("No se encontraron columnas que contengan nombres de ingredientes.")
+        st.write("Las columnas disponibles son:", cas_db.columns.tolist())
+        return pd.DataFrame()
+    
+    # Usar la primera columna detectada como columna principal
+    columna_nombre = posibles_columnas_nombre[0]
     
     # Buscar cada ingrediente según el modo (exacto o aproximado)
     for ing in ingredientes:
+        # Limpiar el ingrediente de búsqueda
+        ing_limpio = ing.strip()
+        
         if exact:
             # Comparación exacta (ignorando mayúsculas y espacios adicionales)
-            mask = cas_db[columna_nombre].astype(str).str.lower().str.strip() == ing.lower().strip()
+            mask = cas_db[columna_nombre].astype(str).str.lower().str.strip() == ing_limpio.lower()
             df_ing = cas_db[mask]
+            
             if df_ing.empty:
                 # Si no se encuentra, crear una fila indicando "No encontrado"
                 df_not_found = pd.DataFrame({
                     "Búsqueda": [ing],
                     columna_nombre: [ing],
-                    "Resultado": ["No encontrado"]
+                    "Resultado": ["No encontrado (exacto)"]
                 })
                 resultados_formula.append(df_not_found)
             else:
@@ -519,23 +556,25 @@ def buscar_ingredientes_por_nombre(ingredientes, exact=False):
                 resultados_formula.append(df_ing)
         else:
             # Búsqueda aproximada: se buscan coincidencias parciales
-            mask = cas_db[columna_nombre].astype(str).str.contains(ing, case=False, na=False)
+            mask = cas_db[columna_nombre].astype(str).str.contains(ing_limpio, case=False, na=False, regex=False)
             df_ing = cas_db[mask]
+            
             if not df_ing.empty:
                 df_ing = df_ing.copy()
                 df_ing["Búsqueda"] = ing
                 resultados_formula.append(df_ing)
             else:
-                # También se puede agregar una fila "No encontrado" en modo aproximado
+                # También crear una fila "No encontrado" en modo aproximado
                 df_not_found = pd.DataFrame({
                     "Búsqueda": [ing],
                     columna_nombre: [ing],
-                    "Resultado": ["No encontrado"]
+                    "Resultado": ["No encontrado (aproximado)"]
                 })
                 resultados_formula.append(df_not_found)
     
     if resultados_formula:
-        return pd.concat(resultados_formula, ignore_index=True)
+        resultado_final = pd.concat(resultados_formula, ignore_index=True)
+        return resultado_final
     else:
         return pd.DataFrame()
 
