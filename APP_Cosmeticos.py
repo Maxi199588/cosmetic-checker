@@ -149,30 +149,38 @@ def load_data():
         info_carga.append(f"Intentando cargar CAS desde: {cas_db_path}")
         
         # Intentar diferentes configuraciones de skiprows para encontrar la correcta
-        for skip_rows in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]:
+        cas_db_loaded = False
+        for skip_rows in [7, 8, 6, 9, 5, 10, 4, 3, 2, 1, 0]:  # Empezar con 7 que es lo más probable
             try:
                 cas_db_temp = pd.read_excel(cas_db_path, skiprows=skip_rows, header=0, engine="openpyxl")
                 cas_db_temp.columns = cas_db_temp.columns.str.strip()
                 
-                # Verificar si tiene datos útiles (más de 10 filas y al menos una columna con "name" o "inci")
-                if len(cas_db_temp) > 10:
-                    has_name_col = any('name' in col.lower() or 'inci' in col.lower() or 'ingredient' in col.lower() for col in cas_db_temp.columns)
-                    if has_name_col:
-                        cas_db = cas_db_temp
-                        info_carga.append(f"✅ COSING Ingredients-Fragrance Inventory cargado con skiprows={skip_rows}: {len(cas_db)} filas")
-                        info_carga.append(f"Columnas en CAS DB: {', '.join(cas_db.columns.tolist())}")
-                        
-                        # Renombrar columna si es necesario
-                        if "INCI name" in cas_db.columns:
-                            cas_db.rename(columns={"INCI name": "Ingredient"}, inplace=True)
-                            info_carga.append("✅ Columna 'INCI name' renombrada a 'Ingredient'")
-                        
-                        break
+                # Verificar si tiene datos útiles y columnas reales (no todas "Unnamed")
+                if len(cas_db_temp) > 1000:  # Debe tener muchos registros
+                    # Contar cuántas columnas NO son "Unnamed"
+                    named_columns = [col for col in cas_db_temp.columns if not str(col).lower().startswith("unnamed")]
+                    unnamed_columns = [col for col in cas_db_temp.columns if str(col).lower().startswith("unnamed")]
+                    
+                    # Si tiene más columnas con nombre real que "Unnamed", es buena señal
+                    if len(named_columns) >= len(unnamed_columns):
+                        has_name_col = any('name' in col.lower() or 'inci' in col.lower() or 'ingredient' in col.lower() for col in cas_db_temp.columns)
+                        if has_name_col:
+                            cas_db = cas_db_temp
+                            info_carga.append(f"✅ COSING Ingredients-Fragrance Inventory cargado con skiprows={skip_rows}: {len(cas_db)} filas")
+                            info_carga.append(f"Columnas en CAS DB: {', '.join(cas_db.columns.tolist())}")
+                            
+                            # Renombrar columna si es necesario
+                            if "INCI name" in cas_db.columns:
+                                cas_db.rename(columns={"INCI name": "Ingredient"}, inplace=True)
+                                info_carga.append("✅ Columna 'INCI name' renombrada a 'Ingredient'")
+                            
+                            cas_db_loaded = True
+                            break
             except Exception as inner_e:
                 continue
         
-        if cas_db.empty:
-            info_carga.append(f"❌ No se pudo cargar la base de datos CAS con ninguna configuración")
+        if not cas_db_loaded:
+            info_carga.append(f"❌ No se pudo cargar la base de datos CAS con ninguna configuración válida")
         
     except Exception as e:
         cas_db = pd.DataFrame(columns=['Ingredient', 'CAS Number'])
